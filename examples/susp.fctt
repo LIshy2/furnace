@@ -1,0 +1,99 @@
+module susp where
+{
+  import circle data susp (A : U) = north | south | merid (a : A) < i > [(i = 0) -> north, (i = 1) -> south];
+  sphere : nat -> U = split
+  {
+    zero -> bool;
+    suc n -> susp (sphere n)
+  };
+  sone : U = sphere one;
+  path : bool -> Path S1 base base = split
+  {
+    false -> loop1;
+    true -> refl S1 base
+  };
+  s1ToCircle : sone -> S1 = split
+  {
+    north -> base;
+    south -> base;
+    merid b @ i -> path b @ i
+  };
+  m0 : Path sone north south = < i > merid
+  {
+    sone
+  }
+  false @ i;
+  m1 : Path sone north south = < i > merid
+  {
+    sone
+  }
+  true @ i;
+  invm1 : Path sone south north = inv sone north south m1;
+  circleToS1 : S1 -> sone = split
+  {
+    base -> north;
+    loop @ i -> compPath sone north south north m0 invm1 @ i
+  };
+  merid1 (b : bool) : Path sone north south = < i > merid
+  {
+    sone
+  }
+  b @ i;
+  co (x : sone) : sone = circleToS1 (s1ToCircle x);
+  lemSquare (A : U) (a b : A) (m0 m1 : Path A a b) : Square A a a a b (compPath A a b a m0 (inv A a b m1)) m0 (refl A a) m1 = < i j > comp (< _ > A) (m0 @ i) [(i = 1) -> < k > m1 @ j \/ - k, (i = 0) -> < _ > a, (j = 1) -> < _ > m0 @ i, (j = 0) -> < k > comp (< _ > A) (m0 @ i) [(k = 0) -> < _ > m0 @ i, (i = 0) -> < _ > a, (i = 1) -> < l > m1 @ - k \/ - l]];
+  coid : (x : sone) -> Path sone (co x) x = split
+  {
+    north -> refl sone north;
+    south -> m1;
+    merid b @ i -> ind b @ i where
+    {
+      F (x : sone) : U = Path sone (co x) x;
+      ind : (b : bool) -> PathS sone F north south (merid1 b) (refl sone north) m1 = split
+      {
+        false -> lemSquare sone north south m0 m1;
+        true -> < j k > m1 @ j /\ k
+      }
+    }
+  };
+  oc (x : S1) : S1 = s1ToCircle (circleToS1 x);
+  ocid : (x : S1) -> Path S1 (oc x) x = split
+  {
+    base -> refl S1 base;
+    loop @ i -> < j > comp (< _ > S1) (loop1 @ i) [(i = 0) -> < _ > base, (i = 1) -> < _ > base, (j = 1) -> < _ > loop1 @ i, (j = 0) -> < k > comp (< _ > S1) (loop1 @ i) [(k = 0) -> < _ > loop1 @ i, (i = 0) -> < _ > base, (i = 1) -> < _ > base]]
+  };
+  s1EqCircle : Path U sone S1 = isoPath sone S1 s1ToCircle circleToS1 ocid coid;
+  s1EqS1 : Path U S1 S1 = compPath U S1 sone S1 (inv U sone S1 s1EqCircle) s1EqCircle;
+  lem (A : U) (a : A) : Path A comp (< _ > A) (comp (< _ > A) (comp (< _ > A) a []) []) [] a = < i > comp (< _ > A) (comp (< _ > A) (comp (< _ > A) a [(i = 1) -> < _ > a]) [(i = 1) -> < _ > a]) [(i = 1) -> < _ > a];
+  ptU : U = (X : U) * X;
+  lemPt (A : U) (B : U) (p : Path U A B) (a : A) : Path ptU (A, a) (B, transport p a) = < i > (p @ i, comp (< j > p @ i /\ j) a [(i = 0) -> < _ > a]);
+  Omega (X : ptU) : ptU = (Path X .1 X .2 X .2, refl X .1 X .2);
+  lem (A : U) (a : A) : Path A comp (< _ > A) (comp (< _ > A) (comp (< _ > A) a []) []) [] a = < i > comp (< _ > A) (comp (< _ > A) (comp (< _ > A) a [(i = 1) -> < _ > a]) [(i = 1) -> < _ > a]) [(i = 1) -> < _ > a];
+  lem1 (A : U) (a : A) : Path ptU (A, comp (< _ > A) (comp (< _ > A) (comp (< _ > A) a []) []) []) (A, a) = < i > (A, lem A a @ i);
+  loop1S : Path sone north north = compPath sone north south north m0 invm1;
+  loop2S : Path sone north north = compPath sone north north north loop1S loop1S;
+  suspOf (A X : U) : U = (u : X) * (v : X) * A -> Path X u v;
+  funToL (A X : U) (f : susp A -> X) : suspOf A X = (f north, f south, \ (a : A) -> < i > f (merid
+  {
+    susp A
+  }
+  a @ i));
+  lToFun (A X : U) (z : suspOf A X) : susp A -> X = split
+  {
+    north -> z .1;
+    south -> z .2 .1;
+    merid a @ i -> z .2 .2 a @ i
+  };
+  test1 (A X : U) (z : suspOf A X) : Path (suspOf A X) (funToL A X (lToFun A X z)) z = refl (suspOf A X) z;
+  rem (A X : U) (f : susp A -> X) : (u : susp A) -> Path X (lToFun A X (funToL A X f) u) (f u) = split
+  {
+    north -> refl X (f north);
+    south -> refl X (f south);
+    merid a @ i -> refl X (f (merid
+    {
+      susp A
+    }
+    a @ i))
+  };
+  test2 (A X : U) (f : susp A -> X) : Path (susp A -> X) (lToFun A X (funToL A X f)) f = < i > \ (u : susp A) -> rem A X f u @ i;
+  funSusp (A X : U) : Path U (susp A -> X) (suspOf A X) = isoPath (susp A -> X) (suspOf A X) (funToL A X) (lToFun A X) (test1 A X) (test2 A X)
+}

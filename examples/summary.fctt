@@ -1,0 +1,10 @@
+module summary where
+{
+  import univalence;
+  import idtypes section71 (A B : U) (p : Path U A B) : equiv A B = transEquivDirect A B p;
+  corollary10 (B : U) : isContr ((X : U) * equiv X B) = univalenceAlt B;
+  corollary11 (t : (A X : U) -> Path U X A -> equiv X A) (A : U) : (X : U) -> isEquiv (Path U X A) (equiv X A) (t A X) = thmUniv t A;
+  corollary26_1 (A B : U) : isEquiv (Path U A B) (equiv A B) (transEquiv A B) = transEquivIsEquiv A B;
+  corollary26_2 (A : U) : isContr ((B : U) * equiv A B) = univalenceAlt2 A;
+  section9_1 (A B : U) : equivId Id U A B (equivId A B) = univalenceId A B
+}

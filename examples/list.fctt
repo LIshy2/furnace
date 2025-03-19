@@ -1,0 +1,45 @@
+module list where
+{
+  import prelude data list (A : U) = nil | cons (a : A) (as : list A);
+  append (A : U) : list A -> list A -> list A = split
+  {
+    nil -> idfun (list A);
+    cons x xs -> \ (ys : list A) -> cons x (append A xs ys)
+  };
+  reverse (A : U) : list A -> list A = split
+  {
+    nil -> nil;
+    cons x xs -> append A (reverse A xs) (cons x nil)
+  };
+  map (A B : U) (f : A -> B) : list A -> list B = split
+  {
+    nil -> nil;
+    cons x xs -> cons (f x) (map A B f xs)
+  };
+  lem (A B C : U) (f : A -> B) (g : B -> C) : (xs : list A) -> Path (list C) (map B C g (map A B f xs)) (map A C (\ (x : A) -> g (f x)) xs) = split
+  {
+    nil -> < i > nil;
+    cons x xs -> < i > cons (g (f x)) (lem A B C f g xs @ i)
+  };
+  funPath (A : U) (x : A) : A = x;
+  lem1 (A : U) : (xs : list A) -> Path (list A) (map A A (funPath A) xs) xs = split
+  {
+    nil -> < i > nil;
+    cons x xs -> < i > cons x (lem1 A xs @ i)
+  };
+  reverse (A : U) : list A -> list A = split
+  {
+    nil -> nil;
+    cons x xs -> append A (reverse A xs) (cons x nil)
+  };
+  lem2 (A : U) : (xs : list A) -> Path (list A) (append A xs nil) xs = split
+  {
+    nil -> < i > nil;
+    cons x xs -> < i > cons x (lem2 A xs @ i)
+  };
+  assoc (A : U) : (xs ys zs : list A) -> Path (list A) (append A (append A xs ys) zs) (append A xs (append A ys zs)) = split
+  {
+    nil -> \ (ys zs : list A) -> < i > append A ys zs;
+    cons x xs -> \ (ys zs : list A) -> < i > cons x (assoc A xs ys zs @ i)
+  }
+}

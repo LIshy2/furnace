@@ -1,0 +1,52 @@
+module injective where
+{
+  import equiv inj0 (A B : U) (f : A -> B) (sA : set A) (sB : set B) : U = (a0 a1 : A) -> Path B (f a0) (f a1) -> Path A a0 a1;
+  inj1 (A B : U) (f : A -> B) (sA : set A) (sB : set B) : U = (b : B) -> prop ((a : A) * Path B (f a) b);
+  inj01 (A B : U) (f : A -> B) (sA : set A) (sB : set B) : inj0 A B f sA sB -> inj1 A B f sA sB = \ (i0 : inj0 A B f sA sB) (b : B) (c d : (a : A) * Path B (f a) b) -> let
+  {
+    F (a : A) : U = Path B (f a) b;
+    pF (a : A) : prop (F a) = sB (f a) b;
+    p : Path B (f c .1) (f d .1) = < i > comp (< j > B) (c .2 @ i) [(i = 0) -> < j > f c .1, (i = 1) -> < j > d .2 @ - j];
+    q : Path A c .1 d .1 = i0 c .1 d .1 p
+  }
+  in lemSig A F pF c d q;
+  inj10 (A B : U) (f : A -> B) (sA : set A) (sB : set B) : inj1 A B f sA sB -> inj0 A B f sA sB = \ (i1 : inj1 A B f sA sB) (a0 a1 : A) (p : Path B (f a0) (f a1)) -> let
+  {
+    c : (a : A) * Path B (f a) (f a1) = (a0, p);
+    d : (a : A) * Path B (f a) (f a1) = (a1, < i > f a1);
+    q : Path ((a : A) * Path B (f a) (f a1)) c d = i1 (f a1) c d;
+    fst : ((a : A) * Path B (f a) (f a1)) -> A = \ (x : (a : A) * Path B (f a) (f a1)) -> x .1
+  }
+  in < i > fst (q @ i);
+  prop_inj0 (A B : U) (f : A -> B) (sA : set A) (sB : set B) : prop (inj0 A B f sA sB) = let
+  {
+    c (a0 a1 : A) : prop (Path B (f a0) (f a1) -> Path A a0 a1) = let
+    {
+      P : Path B (f a0) (f a1) -> U = \ (_ : Path B (f a0) (f a1)) -> Path A a0 a1;
+      h : (x : Path B (f a0) (f a1)) -> prop (P x) = \ (_ : Path B (f a0) (f a1)) -> sA a0 a1
+    }
+    in propPi (Path B (f a0) (f a1)) P h;
+    d (a0 : A) : prop ((a1 : A) -> Path B (f a0) (f a1) -> Path A a0 a1) = let
+    {
+      P : A -> U = \ (a1 : A) -> Path B (f a0) (f a1) -> Path A a0 a1;
+      h : (a1 : A) -> prop (P a1) = \ (a1 : A) -> c a0 a1
+    }
+    in propPi A P h;
+    e : prop (inj0 A B f sA sB) = let
+    {
+      P : A -> U = \ (a0 : A) -> (a1 : A) -> Path B (f a0) (f a1) -> Path A a0 a1;
+      h : (a0 : A) -> prop ((a1 : A) -> Path B (f a0) (f a1) -> Path A a0 a1) = \ (a0 : A) -> d a0
+    }
+    in propPi A P h
+  }
+  in e;
+  prop_inj1 (A B : U) (f : A -> B) (sA : set A) (sB : set B) : prop (inj1 A B f sA sB) = let
+  {
+    P : B -> U = \ (b : B) -> (a : A) * Path B (f a) b;
+    Q : B -> U = \ (b : B) -> prop (P b);
+    h : (b : B) -> prop (Q b) = \ (b : B) -> propIsProp (P b)
+  }
+  in propPi B Q h;
+  propPath (A B : U) (f : A -> B) (g : B -> A) (pA : prop A) (pB : prop B) : Path U A B = isoPath A B f g (\ (b : B) -> pB (f (g b)) b) (\ (a : A) -> pA (g (f a)) a);
+  injPath (A B : U) (f : A -> B) (sA : set A) (sB : set B) : Path U (inj0 A B f sA sB) (inj1 A B f sA sB) = propPath (inj0 A B f sA sB) (inj1 A B f sA sB) (inj01 A B f sA sB) (inj10 A B f sA sB) (prop_inj0 A B f sA sB) (prop_inj1 A B f sA sB)
+}

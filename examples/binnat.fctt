@@ -1,0 +1,165 @@
+module binnat where
+{
+  import nat data pos = pos1 | x0 (p : pos) | x1 (p : pos);
+  sucPos : pos -> pos = split
+  {
+    pos1 -> x0 pos1;
+    x0 p -> x1 p;
+    x1 p -> x0 (sucPos p)
+  };
+  doubleN : nat -> nat = split
+  {
+    zero -> zero;
+    suc n -> suc (suc (doubleN n))
+  };
+  PosToN : pos -> nat = split
+  {
+    pos1 -> suc zero;
+    x0 p -> doubleN (PosToN p);
+    x1 p -> suc (doubleN (PosToN p))
+  };
+  posInd (P : pos -> U) (h1 : P pos1) (hS : (p : pos) -> P p -> P (sucPos p)) (p : pos) : P p = let
+  {
+    H (p : pos) (hx0p : P (x0 p)) : P (x0 (sucPos p)) = hS (x1 p) (hS (x0 p) hx0p);
+    f : (p : pos) -> P p = split
+    {
+      pos1 -> h1;
+      x0 p -> posInd (\ (p : pos) -> P (x0 p)) (hS pos1 h1) H p;
+      x1 p -> hS (x0 p) (posInd (\ (p : pos) -> P (x0 p)) (hS pos1 h1) H p)
+    }
+  }
+  in f p;
+  sucPosSuc : (p : pos) -> Path nat (PosToN (sucPos p)) (suc (PosToN p)) = split
+  {
+    pos1 -> < _ > suc (suc zero);
+    x0 p -> < _ > suc (doubleN (PosToN p));
+    x1 p -> < i > doubleN (sucPosSuc p @ i)
+  };
+  zeronPosToN (p : pos) : neg (Path nat zero (PosToN p)) = posInd (\ (p : pos) -> neg (Path nat zero (PosToN p))) (\ (prf : Path nat zero one) -> znots zero prf) hS p where
+  {
+    hS (p : pos) (_ : neg (Path nat zero (PosToN p))) (prf : Path nat zero (PosToN (sucPos p))) : N0 = znots (PosToN p) (< i > comp (< j > nat) (prf @ i) [(i = 0) -> < _ > zero, (i = 1) -> sucPosSuc p])
+  };
+  NtoPos' : nat -> pos = split
+  {
+    zero -> pos1;
+    suc n -> sucPos (NtoPos' n)
+  };
+  NtoPos : nat -> pos = split
+  {
+    zero -> pos1;
+    suc n -> NtoPos' n
+  };
+  PosToNK : (n : nat) -> Path nat (PosToN (NtoPos (suc n))) (suc n) = split
+  {
+    zero -> < _ > suc zero;
+    suc n -> let
+    {
+      ih : Path nat (suc (PosToN (NtoPos' n))) (suc (suc n)) = < i > suc (PosToNK n @ i)
+    }
+    in compPath nat (PosToN (NtoPos (suc (suc n)))) (suc (PosToN (NtoPos' n))) (suc (suc n)) (sucPosSuc (NtoPos' n)) ih
+  };
+  NtoPosSuc : (n : nat) -> neg (Path nat zero n) -> Path pos (NtoPos (suc n)) (sucPos (NtoPos n)) = split
+  {
+    zero -> \ (p : neg (Path nat zero zero)) -> efq (Path pos (NtoPos (suc zero)) (sucPos (NtoPos zero))) (p (< _ > zero));
+    suc n -> \ (_ : neg (Path nat zero (suc n))) -> < _ > sucPos (NtoPos' n)
+  };
+  NtoPosK (p : pos) : Path pos (NtoPos (PosToN p)) p = posInd (\ (p : pos) -> Path pos (NtoPos (PosToN p)) p) (refl pos pos1) hS p where
+  {
+    hS (p : pos) (hp : Path pos (NtoPos (PosToN p)) p) : Path pos (NtoPos (PosToN (sucPos p))) (sucPos p) = let
+    {
+      H1 : Path pos (NtoPos (PosToN (sucPos p))) (NtoPos (suc (PosToN p))) = mapOnPath nat pos NtoPos (PosToN (sucPos p)) (suc (PosToN p)) (sucPosSuc p);
+      H2 : Path pos (NtoPos (suc (PosToN p))) (sucPos (NtoPos (PosToN p))) = NtoPosSuc (PosToN p) (zeronPosToN p);
+      H3 : Path pos (sucPos (NtoPos (PosToN p))) (sucPos p) = mapOnPath pos pos sucPos (NtoPos (PosToN p)) p hp
+    }
+    in compPath pos (NtoPos (PosToN (sucPos p))) (sucPos (NtoPos (PosToN p))) (sucPos p) (compPath pos (NtoPos (PosToN (sucPos p))) (NtoPos (suc (PosToN p))) (sucPos (NtoPos (PosToN p))) H1 H2) H3
+  };
+  posToNinj : injective pos nat PosToN = \ (p0 p1 : pos) (h : Path nat (PosToN p0) (PosToN p1)) -> < i > comp (< _ > pos) (NtoPos (h @ i)) [(i = 0) -> NtoPosK p0, (i = 1) -> NtoPosK p1];
+  data binN = binN0 | binNpos (p : pos);
+  NtoBinN : nat -> binN = split
+  {
+    zero -> binN0;
+    suc n -> binNpos (NtoPos (suc n))
+  };
+  BinNtoN : binN -> nat = split
+  {
+    binN0 -> zero;
+    binNpos p -> PosToN p
+  };
+  NtoBinNK : (n : nat) -> Path nat (BinNtoN (NtoBinN n)) n = split
+  {
+    zero -> < _ > zero;
+    suc n -> PosToNK n
+  };
+  rem (p : pos) : Path binN (NtoBinN (PosToN (sucPos p))) (binNpos (sucPos p)) = compPath binN (NtoBinN (PosToN (sucPos p))) (binNpos (NtoPos (suc (PosToN p)))) (binNpos (sucPos p)) rem1 rem2 where
+  {
+    rem1 : Path binN (NtoBinN (PosToN (sucPos p))) (binNpos (NtoPos (suc (PosToN p)))) = mapOnPath nat binN NtoBinN (PosToN (sucPos p)) (suc (PosToN p)) (sucPosSuc p);
+    rem2 : Path binN (binNpos (NtoPos (suc (PosToN p)))) (binNpos (sucPos p)) = < i > binNpos (compPath pos (NtoPos (suc (PosToN p))) (sucPos (NtoPos (PosToN p))) (sucPos p) (NtoPosSuc (PosToN p) (zeronPosToN p)) (mapOnPath pos pos sucPos (NtoPos (PosToN p)) p (NtoPosK p)) @ i)
+  };
+  lem1 (p : pos) : Path binN (NtoBinN (PosToN p)) (binNpos p) = posInd (\ (p : pos) -> Path binN (NtoBinN (PosToN p)) (binNpos p)) (refl binN (binNpos pos1)) (\ (p : pos) (_ : Path binN (NtoBinN (PosToN p)) (binNpos p)) -> rem p) p;
+  BinNtoNK : (b : binN) -> Path binN (NtoBinN (BinNtoN b)) b = split
+  {
+    binN0 -> < _ > binN0;
+    binNpos p -> lem1 p
+  };
+  PathbinNN : Path U binN nat = isoPath binN nat BinNtoN NtoBinN NtoBinNK BinNtoNK;
+  doublesN : nat -> nat -> nat = split
+  {
+    zero -> \ (m : nat) -> m;
+    suc n -> \ (m : nat) -> doublesN n (doubleN m)
+  };
+  n1024 : nat = doublesN (add four four) four;
+  doubleBinN : binN -> binN = split
+  {
+    binN0 -> binN0;
+    binNpos p -> binNpos (x0 p)
+  };
+  doublesBinN : nat -> binN -> binN = split
+  {
+    zero -> \ (m : binN) -> m;
+    suc n -> \ (m : binN) -> doublesBinN n (doubleBinN m)
+  };
+  data Double = D (A : U) (double : A -> A) (elt : A);
+  carrier : Double -> U = split
+  {
+    D c _ _ -> c
+  };
+  double : (D : Double) -> carrier D -> carrier D = split
+  {
+    D _ op _ -> op
+  };
+  elt : (D : Double) -> carrier D = split
+  {
+    D _ _ e -> e
+  };
+  DoubleN : Double = D nat doubleN n1024;
+  bin1024 : binN = binNpos (x0 (x0 (x0 (x0 (x0 (x0 (x0 (x0 (x0 (x0 pos1))))))))));
+  DoubleBinN : Double = D binN doubleBinN bin1024;
+  iter (A : U) : nat -> (A -> A) -> A -> A = split
+  {
+    zero -> \ (f : A -> A) (z : A) -> z;
+    suc n -> \ (f : A -> A) (z : A) -> f (iter A n f z)
+  };
+  doubles (D : Double) (n : nat) (x : carrier D) : carrier D = iter (carrier D) n (double D) x;
+  propDouble (D : Double) : U = Path (carrier D) (doubles D n20 (elt D)) (doubles D n5 (doubles D n15 (elt D)));
+  propBin : propDouble DoubleBinN = < _ > doublesBinN n20 (elt DoubleBinN);
+  doubleBinN' (b : binN) : binN = NtoBinN (doubleN (BinNtoN b));
+  DoubleBinN' : Double = D binN doubleBinN' (NtoBinN n1024);
+  eqDouble1 : Path Double DoubleN DoubleBinN' = elimIsIso nat (\ (B : U) (f : nat -> B) (g : B -> nat) -> Path Double DoubleN (D B (\ (b : B) -> f (doubleN (g b))) (f n1024))) (< _ > DoubleN) binN NtoBinN BinNtoN BinNtoNK NtoBinNK;
+  eqDouble2 : Path Double DoubleBinN' DoubleBinN = mapOnPath (binN -> binN) Double F doubleBinN' doubleBinN rem where
+  {
+    F (d : binN -> binN) : Double = D binN d (NtoBinN n1024);
+    rem : Path (binN -> binN) doubleBinN' doubleBinN = < i > \ (x : binN) -> rem1 x @ i where
+    {
+      rem1 : (n : binN) -> Path binN (doubleBinN' n) (doubleBinN n) = split
+      {
+        binN0 -> < _ > binN0;
+        binNpos p -> lem1 (x0 p)
+      }
+    }
+  };
+  eqDouble : Path Double DoubleN DoubleBinN = compPath Double DoubleN DoubleBinN' DoubleBinN eqDouble1 eqDouble2;
+  opaque doubleN;
+  propDoubleImpl : propDouble DoubleBinN -> propDouble DoubleN = substInv Double propDouble DoubleN DoubleBinN eqDouble;
+  goal : propDouble DoubleN = propDoubleImpl propBin;
+  transparent_all
+}

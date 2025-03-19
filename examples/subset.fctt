@@ -1,0 +1,91 @@
+module subset where
+{
+  import injective;
+  import sigma;
+  import univalence subset0 (A : U) (sA : set A) : U = (B : U) * (sB : set B) * (f : B -> A) * inj1 B A f sB sA;
+  subset1 (A : U) (sA : set A) : U = (a : A) -> (X : U) * prop X;
+  subset01 (A : U) (sA : set A) : subset0 A sA -> subset1 A sA = \ (s : subset0 A sA) (a : A) -> let
+  {
+    B : U = s .1;
+    sB : set B = s .2 .1;
+    f : B -> A = s .2 .2 .1;
+    i : inj1 B A f sB sA = s .2 .2 .2;
+    X : U = (b : B) * Path A (f b) a;
+    pX : prop X = i a
+  }
+  in (X, pX);
+  lem (A : U) (P : A -> U) (pP : (x : A) -> prop (P x)) (u v : (x : A) * P x) (p : Path A u .1 v .1) : Path ((x : A) * P x) u v = < i > (p @ i, lemPropF A P pP u .1 v .1 p u .2 v .2 @ i);
+  subset10 (A : U) (sA : set A) : subset1 A sA -> subset0 A sA = \ (P : subset1 A sA) -> let
+  {
+    Q : (a : A) -> U = \ (a : A) -> (P a) .1;
+    B : U = (a : A) * Q a;
+    sQ (a : A) : set (Q a) = propSet (Q a) (P a) .2;
+    sB : set B = setSig A Q sA sQ;
+    f : B -> A = \ (b : B) -> b .1;
+    inj : inj1 B A f sB sA = \ (a : A) (c d : (b : B) * Path A (f b) a) -> let
+    {
+      p : Path A c .1 .1 d .1 .1 = < i > comp (< j > A) (c .2 @ i) [(i = 0) -> < j > c .1 .1, (i = 1) -> < j > d .2 @ - j];
+      q : Path B c .1 d .1 = lem A Q (\ (x : A) -> (P x) .2) c .1 d .1 p;
+      r : Path ((b : B) * Path A (f b) a) c d = lem B (\ (b : B) -> Path A (f b) a) (\ (b : B) -> sA (f b) a) c d q
+    }
+    in r
+  }
+  in (B, sB, f, inj);
+  opaque lemPropF;
+  opaque subst;
+  subsetIso0 (A : U) (sA : set A) : (s0 : subset0 A sA) -> Path (subset0 A sA) (subset10 A sA (subset01 A sA s0)) s0 = \ (s0 : subset0 A sA) -> let
+  {
+    s0' : subset0 A sA = subset10 A sA (subset01 A sA s0);
+    B : U = s0 .1;
+    B' : U = s0' .1;
+    sB : set B = s0 .2 .1;
+    sB' : set B' = s0' .2 .1;
+    f : B -> A = s0 .2 .2 .1;
+    f' : B' -> A = s0' .2 .2 .1;
+    inj : inj1 B A f sB sA = s0 .2 .2 .2;
+    inj' : inj1 B' A f' sB' sA = s0' .2 .2 .2;
+    g (b : B) : B' = (f b, b, < i > f b);
+    g' (b' : B') : B = b' .2 .1;
+    s (x : B) : Path B (g' (g x)) x = < i > x;
+    t (x : B') : Path B' (g (g' x)) x = < i > (x .2 .2 @ i, x .2 .1, < j > x .2 .2 @ i /\ j);
+    P (X : U) (h : X -> B) : U = (p : Path U X B) * PathP (< i > p @ i -> A) (\ (x : X) -> f' (g (h x))) f;
+    q : P B' g' = elimEquiv B P (< i > B, < i > f) B' (g', isoToEquiv B' B g' g s t);
+    idB : Path U B' B = q .1;
+    idsB : PathP (< i > set (idB @ i)) sB' sB = lemPropF U set setIsProp B' B idB sB' sB;
+    idf : PathP (< i > idB @ i -> A) f' f = let
+    {
+      Q (h : B' -> B') : U = PathP (< i > q .1 @ i -> A) (\ (x : B') -> f' (h x)) f;
+      a : B' -> B' = \ (x : B') -> g (g' x);
+      b : B' -> B' = \ (x : B') -> x;
+      p : Path (B' -> B') a b = < i > \ (x : B') -> t x @ i
+    }
+    in subst (B' -> B') Q a b p q .2;
+    idinj : PathP (< i > inj1 (idB @ i) A (idf @ i) (idsB @ i) sA) inj' inj = let
+    {
+      T : U = (X : U) * (_ : X -> A) * set X;
+      P : T -> U = \ (t : T) -> inj1 t .1 A t .2 .1 t .2 .2 sA;
+      pP : (t : T) -> prop (P t) = \ (t : T) -> prop_inj1 t .1 A t .2 .1 t .2 .2 sA;
+      t0 : T = (B', f', sB');
+      t1 : T = (B, f, sB);
+      idT : Path T t0 t1 = < i > (idB @ i, idf @ i, idsB @ i)
+    }
+    in lemPropF T P pP t0 t1 idT inj' inj
+  }
+  in < i > (idB @ i, idsB @ i, idf @ i, idinj @ i);
+  subsetIso1 (A : U) (sA : set A) : (s1 : subset1 A sA) -> Path (subset1 A sA) (subset01 A sA (subset10 A sA s1)) s1 = \ (s1 : subset1 A sA) -> let
+  {
+    s1' : subset1 A sA = subset01 A sA (subset10 A sA s1);
+    ids1 : (a : A) -> Path ((X : U) * prop X) (s1' a) (s1 a) = \ (a : A) -> let
+    {
+      f : (s1' a) .1 -> (s1 a) .1 = \ (x : (s1' a) .1) -> subst A (\ (a : A) -> (s1 a) .1) x .1 .1 a x .2 x .1 .2;
+      g : (s1 a) .1 -> (s1' a) .1 = \ (x : (s1 a) .1) -> ((a, x), < i > a);
+      s : (x : (s1 a) .1) -> Path (s1 a) .1 (f (g x)) x = \ (x : (s1 a) .1) -> (s1 a) .2 (f (g x)) x;
+      t : (x : (s1' a) .1) -> Path (s1' a) .1 (g (f x)) x = \ (x : (s1' a) .1) -> (s1' a) .2 (g (f x)) x;
+      p : Path U (s1' a) .1 (s1 a) .1 = isoPath (s1' a) .1 (s1 a) .1 f g s t;
+      q : PathP (< i > prop (p @ i)) (s1' a) .2 (s1 a) .2 = lemPropF U prop propIsProp (s1' a) .1 (s1 a) .1 p (s1' a) .2 (s1 a) .2
+    }
+    in < i > (p @ i, q @ i)
+  }
+  in funExt A (\ (_ : A) -> (X : U) * prop X) s1' s1 ids1;
+  subsetPath (A : U) (sA : set A) : Path U (subset0 A sA) (subset1 A sA) = isoPath (subset0 A sA) (subset1 A sA) (subset01 A sA) (subset10 A sA) (subsetIso1 A sA) (subsetIso0 A sA)
+}

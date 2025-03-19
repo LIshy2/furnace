@@ -1,0 +1,213 @@
+use super::ast::{Decl, Term, Dir, System, Face, Side, Formula, AIdent, Label, Branch, Tele, PTele, Module, Import};
+
+grammar;
+
+match {
+    "+",
+    "-",
+    "*",
+    "/",
+    ".",
+    "(",
+    ")",
+    ":",
+    "=",
+    "|",
+    "data",
+    "hdata",
+    "split",
+    "transport",
+    "where",
+    "let",
+    "in",
+    "{",
+    "}",
+    "module",
+    "import",
+    "undefined",
+    "mutual",
+    "opaque",
+    "transparent",
+    "transparent_all",
+    "\\",
+    "->",
+    ">",
+    "<",
+    "split@",
+    "with",
+    "@",
+    "PathP",
+    "comp",
+    "hComp",
+    "fill",
+    "Glue",
+    "unglue",
+    "glue",
+    "idC",
+    "idJ",
+    "Id",
+    ".1",
+    ".2",
+    ",",
+    "U",
+    "?",
+    "0",
+    "1",
+    "[",
+    "]",
+    "\\/",
+    "/\\",
+    ";",
+    r"(_|[a-zA-Z]([a-zA-Z0-9_'']*)?|![0-9]*)",
+
+    r"\s*" => { },
+    r"--[^\n\r]*[\n\r]*" => { },
+    r"\{-([^\*]*\*+[^\*/])*([^\*]*\*+|[^\*])*-\}" => { },
+}
+
+Sep<T, S>: Vec<T> = { // (1)
+    <e:T> <mut v:(S <T>)*> => {
+        v.insert(0, e);
+        v
+    }
+};
+
+EmptySep<T, S>: Vec<T> = { // (1)
+    <e:T?> <mut v:(S <T>)*> => match e { // (2)
+        None => v,
+        Some(e) => {
+            v.insert(0, e);
+            v
+        }
+    }
+};
+
+pub Module: Module = {
+    "module" <name:AIdent> "where" "{" <imports:EmptySep<Import, ";">> <decls:Sep<Decl, ";">> "}" => Module {<>},
+};
+
+pub Import: Import = {
+    "import" <name:AIdent> => Import {<>},
+};
+
+pub Decl: Decl = {
+    <AIdent> <Tele*> ":" <Exp> "=" <ExpWhere> => Decl::Def(<>),
+    "data" <AIdent> <Tele*> "=" <EmptySep<Label, "|">> => Decl::Data(<>),
+    "hdata" <AIdent> <Tele*> "=" <EmptySep<Label, "|">> => Decl::HData(<>),
+    <AIdent> <Tele*> ":" <Exp> "=" "split" "{" <EmptySep<Branch, ";">> "}" => Decl::Split(<>),
+    <AIdent> <Tele*> ":" <Exp> "=" "undefined" => Decl::Undef(<>),
+    "mutual" "{" <EmptySep<Decl, ";">> "}" => Decl::Mutual(<>),
+    "opaque" <AIdent> =>   Decl::Opaque(<>),
+    "transparent" <AIdent> => Decl::Transparent(<>),
+    "transparent_all" => Decl::TransparentAll,
+};
+
+pub ExpWhere: Box<Term> = {
+    <Exp> "where" "{" <EmptySep<Decl, ";">> "}" => Box::new(Term::Where(<>)),
+    Exp,
+};
+
+pub Exp: Box<Term> = {
+    "let" "{" <Sep<Decl, ";">> "}" "in" <Exp> => Box::new(Term::Let(<>)),
+    "\\" <PTele+> "->" <Exp> => Box::new(Term::Lam(<>)),
+    "<" <AIdent+> ">" <Exp> => Box::new(Term::PLam(<>)),
+    "split@" <Exp> "with" "{" <Sep<Branch, ";">> "}" => Box::new(Term::Split(<>)),
+    Exp1
+};
+
+pub Exp1: Box<Term> = {
+    <Exp2> "->" <Exp1> => Box::new(Term::Fun(<>)),
+    <PTele+> "->" <Exp1> => Box::new(Term::Pi(<>)),
+    <PTele+> "*" <Exp1> => Box::new(Term::Sigma(<>)),
+    Exp2
+};
+
+pub Exp2: Box<Term> = {
+    <Exp2> "@" <Formula> => Box::new(Term::AppFormula(<>)),
+    <Exp2> <Exp3> => Box::new(Term::App(<>)),
+    Exp3
+};
+
+pub Exp3: Box<Term> = {
+    "PathP" <Exp4> <Exp4> <Exp4> => Box::new(Term::PathP(<>)),
+    "comp" <Exp4> <Exp4> <System> => Box::new(Term::Comp(<>)),
+    "hComp" <Exp4> <Exp4> <System> => Box::new(Term::HComp(<>)),
+    "transport" <Exp4> <Exp4> => Box::new(Term::Trans(<>)),
+    "fill" <Exp4> <Exp4> <System> => Box::new(Term::Fill(<>)),
+    "Glue" <Exp4> <System> => Box::new(Term::Glue(<>)),
+    "glue" <Exp4> <System> => Box::new(Term::GlueElem(<>)),
+    "unglue" <Exp4> <System> => Box::new(Term::UnGlueElem(<>)),
+    "Id" <Exp4> <Exp4> <Exp3> => Box::new(Term::Id(<>)),
+    "idC" <Exp4> <System> => Box::new(Term::IdPair(<>)),
+    "idJ" <Exp4> <Exp4> <Exp4> <Exp4> <Exp4> <Exp4> => Box::new(Term::IdJ(<>)),
+    Exp4
+};
+
+pub Exp4: Box<Term> = {
+    <Exp4> ".1" => Box::new(Term::Fst(<>)),
+    <Exp4> ".2" => Box::new(Term::Snd(<>)),
+    Exp5
+}
+
+pub Exp5: Box<Term> = {
+    "(" <Exp> "," <Sep<Exp, ",">> ")" => Box::new(Term::Pair(<>)),
+    "(" <Exp> ")",
+    <AIdent> => Box::new(Term::Var(<>)),
+    <AIdent> "{" <Exp> "}" => Box::new(Term::PCon(<>)),
+    "U" => Box::new(Term::U),
+    "?" => Box::new(Term::Hole),
+};
+
+pub Dir: Dir = {
+    "0" => Dir::Zero,
+    "1" => Dir::One,
+};
+
+pub System: System = {
+    "[" <EmptySep<Side, ",">> "]" => System(<>),
+};
+
+pub Face: Face = {
+    "(" <id:AIdent> "=" <dir:Dir> ")" => Face {<>},
+};
+
+pub Side: Side = {
+    <faces:Face*> "->" <exp:Exp> => Side {<>},
+};
+
+pub Formula: Box<Formula> = {
+    <Formula> "\\/" <Formula1> => Box::new(Formula::Or(<>)),
+    Formula1
+};
+
+pub Formula1: Box<Formula> = {
+    <Formula1> "/\\" <Formula2> => Box::new(Formula::And(<>)),
+    Formula2
+}
+
+pub Formula2: Box<Formula> = {
+    "-" <Formula2> => Box::new(Formula::Neg(<>)),
+    <AIdent> => Box::new(Formula::Atom(<>)),
+    <Dir> => Box::new(Formula::Dir(<>)),
+    "(" <Formula> ")",
+};
+
+pub Branch: Branch = {
+    <AIdent> <AIdent*> "->" <ExpWhere> => Branch::OBranch(<>),
+    <AIdent> <AIdent*> "@" <AIdent+> "->" <ExpWhere> => Branch::PBranch(<>),
+};
+
+pub Label: Label = {
+    AIdent Tele* => Label::OLabel(<>),
+    <AIdent> <Tele*> "<" <AIdent+> ">" <System> => Label::PLabel(<>),
+};
+
+pub Tele: Tele = {
+    "(" <ids:AIdent+> ":" <tpe:Exp> ")" => Tele { <> },
+};
+
+pub PTele: PTele = {
+    "(" <id:Exp> ":" <tpe:Exp> ")" => PTele { <> },
+};
+
+pub AIdent: AIdent = <s:r"(_|[a-zA-Z]([a-zA-Z0-9_'']*)?|![0-9]*)"> => s.to_string();

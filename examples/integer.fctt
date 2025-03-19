@@ -1,0 +1,101 @@
+module integer where
+{
+  import int data int = pos (n : nat) | neg (n : nat) | zeroP < i > [(i = 0) -> pos zero, (i = 1) -> neg zero];
+  zeroZ : Path int (pos zero) (neg zero) = < i > zeroP
+  {
+    int
+  }
+  @ i;
+  sucInt : int -> int = split
+  {
+    pos n -> pos (suc n);
+    neg n -> sucNat n where
+    {
+      sucNat : nat -> int = split
+      {
+        zero -> pos one;
+        suc n -> neg n
+      }
+    };
+    zeroP @ i -> pos one
+  };
+  predInt : int -> int = split
+  {
+    pos n -> predNat n where
+    {
+      predNat : nat -> int = split
+      {
+        zero -> neg one;
+        suc n -> pos n
+      }
+    };
+    neg n -> neg (suc n);
+    zeroP @ i -> neg one
+  };
+  toZ : int -> Z = split
+  {
+    pos n -> inr n;
+    neg n -> auxToZ n where
+    {
+      auxToZ : nat -> Z = split
+      {
+        zero -> inr zero;
+        suc n -> inl n
+      }
+    };
+    zeroP @ i -> inr zero
+  };
+  fromZ : Z -> int = split
+  {
+    inl n -> neg (suc n);
+    inr n -> pos n
+  };
+  toZK : (a : Z) -> Path Z (toZ (fromZ a)) a = split
+  {
+    inl n -> < _ > inl n;
+    inr n -> < _ > inr n
+  };
+  fromZK : (a : int) -> Path int (fromZ (toZ a)) a = split
+  {
+    pos n -> < _ > pos n;
+    neg n -> rem n where
+    {
+      rem : (n : nat) -> Path int (fromZ (toZ (neg n))) (neg n) = split
+      {
+        zero -> zeroZ;
+        suc m -> < _ > neg (suc m)
+      }
+    };
+    zeroP @ i -> < j > zeroZ @ i /\ j
+  };
+  isoIntZ : Path U Z int = isoPath Z int fromZ toZ fromZK toZK;
+  intSet : set int = subst U set Z int isoIntZ ZSet;
+  T : U = Path int (pos zero) (pos zero);
+  p0 : T = < _ > pos zero;
+  p1 : T = compPath int (pos zero) (neg zero) (pos zero) zeroZ (< i > zeroZ @ - i);
+  test0 : Path (Path Z (inr zero) (inr zero)) (< _ > inr zero) (< _ > inr zero) = ZSet (inr zero) (inr zero) (< _ > inr zero) (< _ > inr zero);
+  test1 : Path T p0 p1 = intSet (pos zero) (pos zero) p0 p1;
+  test2 : Path T p0 p0 = intSet (pos zero) (pos zero) p0 p0;
+  ntest1 : Path T p0 p1 = < i1 i2 > comp (< _ > int) (pos zero) [(i1 = 0) -> < i3 > pos zero, (i1 = 1) -> < i3 > comp (< _ > int) (zeroP
+  {
+    int
+  }
+  @ i2 /\ i3) [(i2 = 0) -> < i4 > pos zero, (i2 = 1) -> < i4 > zeroP
+  {
+    int
+  }
+  @ - i4 /\ i3, (i3 = 0) -> < i4 > pos zero, (i3 = 1) -> < i4 > comp (< _ > int) (zeroP
+  {
+    int
+  }
+  @ i2) [(i2 = 0) -> < i5 > pos zero, (i2 = 1) -> < i5 > zeroP
+  {
+    int
+  }
+  @ - i4 \/ - i5, (i4 = 0) -> < i5 > zeroP
+  {
+    int
+  }
+  @ i2]], (i2 = 0) -> < i3 > pos zero, (i2 = 1) -> < i3 > pos zero];
+  ntest2 : Path T p0 p0 = < i1 i2 > comp (< _ > int) (pos zero) [(i1 = 0) -> < i3 > pos zero, (i1 = 1) -> < i3 > pos zero, (i2 = 0) -> < i3 > pos zero, (i2 = 1) -> < i3 > pos zero]
+}
