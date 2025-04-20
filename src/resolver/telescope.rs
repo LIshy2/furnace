@@ -1,13 +1,15 @@
+use crate::ctt::term;
+use crate::ctt::term::Identifier;
 use crate::parser::ast;
 use crate::parser::ast::AIdent;
 use crate::resolver::context::ResolveContext;
 use crate::resolver::error::ResolveError;
 use crate::resolver::term::resolve_term;
-use crate::term;
+use std::rc::Rc;
 
 #[derive(Clone)]
 pub struct Telescope {
-    scopes: Vec<(Vec<String>, Box<term::Term>)>,
+    scopes: Vec<(Vec<Identifier>, Rc<term::Term>)>,
     ctx: ResolveContext,
 }
 
@@ -24,7 +26,14 @@ impl Telescope {
                 for var in &scope.ids {
                     ctx = ctx.with_var(var.clone());
                 }
-                Ok((scope.ids, param_tpe))
+                Ok((
+                    scope
+                        .ids
+                        .iter()
+                        .map(|x| ctx.resolve_identifier(x))
+                        .collect::<Result<_, ResolveError>>()?,
+                    param_tpe,
+                ))
             })
             .collect::<Result<_, _>>()?;
         Ok(Telescope { scopes, ctx })
@@ -64,7 +73,7 @@ impl Telescope {
     fn through<R>(
         self,
         result: impl FnOnce(ResolveContext) -> Result<R, ResolveError>,
-        layer: &impl Fn(&AIdent, &term::Term, R) -> Result<R, ResolveError>,
+        layer: &impl Fn(&Identifier, &term::Term, R) -> Result<R, ResolveError>,
     ) -> Result<R, ResolveError> {
         self.scopes
             .iter()
@@ -73,23 +82,23 @@ impl Telescope {
             })
     }
 
-    pub fn lambda<B: FnOnce(ResolveContext) -> Result<Box<term::Term>, ResolveError>>(
+    pub fn lambda<B: FnOnce(ResolveContext) -> Result<Rc<term::Term>, ResolveError>>(
         self,
         body: B,
-    ) -> Result<Box<term::Term>, ResolveError> {
+    ) -> Result<Rc<term::Term>, ResolveError> {
         self.through(|ctx| body(ctx), &|name, tpe, body| {
-            let tpe = Box::new(tpe.clone());
-            Ok(Box::new(term::Term::Lam(name.clone(), tpe.clone(), body)))
+            let tpe = Rc::new(tpe.clone());
+            Ok(Rc::new(term::Term::Lam(name.clone(), tpe.clone(), body)))
         })
     }
 
-    pub fn pi<R: FnOnce(ResolveContext) -> Result<Box<term::Term>, ResolveError>>(
+    pub fn pi<R: FnOnce(ResolveContext) -> Result<Rc<term::Term>, ResolveError>>(
         self,
         result_type: R,
-    ) -> Result<Box<term::Term>, ResolveError> {
+    ) -> Result<Rc<term::Term>, ResolveError> {
         self.through(|ctx| result_type(ctx), &|name, tpe, result_type| {
-            let tpe = Box::new(tpe.clone());
-            Ok(Box::new(term::Term::Pi(Box::new(term::Term::Lam(
+            let tpe = Rc::new(tpe.clone());
+            Ok(Rc::new(term::Term::Pi(Rc::new(term::Term::Lam(
                 name.clone(),
                 tpe,
                 result_type,
@@ -97,13 +106,13 @@ impl Telescope {
         })
     }
 
-    pub fn sigma<R: FnOnce(ResolveContext) -> Result<Box<term::Term>, ResolveError>>(
+    pub fn sigma<R: FnOnce(ResolveContext) -> Result<Rc<term::Term>, ResolveError>>(
         self,
         result_type: R,
-    ) -> Result<Box<term::Term>, ResolveError> {
+    ) -> Result<Rc<term::Term>, ResolveError> {
         self.through(|ctx| result_type(ctx), &|name, tpe, result_type| {
-            let tpe = Box::new(tpe.clone());
-            Ok(Box::new(term::Term::Sigma(Box::new(term::Term::Lam(
+            let tpe = Rc::new(tpe.clone());
+            Ok(Rc::new(term::Term::Sigma(Rc::new(term::Term::Lam(
                 name.clone(),
                 tpe,
                 result_type,
@@ -116,7 +125,7 @@ impl Telescope {
             variables: self
                 .scopes
                 .into_iter()
-                .flat_map(|(ids, tpe)| ids.into_iter().map(move |id| (id, tpe.as_ref().clone())))
+                .flat_map(|(ids, tpe)| ids.into_iter().map(move |id| (id, tpe.clone())))
                 .collect(),
         };
         (scope, self.ctx)

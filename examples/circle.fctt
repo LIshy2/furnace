@@ -1,7 +1,9 @@
 module circle where
 {
   import bool;
-  import int data S1 = base | loop < i > [(i = 0) -> base, (i = 1) -> base];
+  import int
+
+  data S1 = base | loop < i > [(i = 0) -> base, (i = 1) -> base];
   loopS1 : U = Path S1 base base;
   loop1 : loopS1 = < i > loop
   {

@@ -2,7 +2,7 @@ use crate::parser::ast;
 use crate::resolver::context::ResolveContext;
 use crate::resolver::declaration::resolve_declarations;
 use crate::resolver::error::ResolveError;
-use crate::term::DeclarationSet;
+use crate::ctt::term::DeclarationSet;
 use std::collections::HashMap;
 
 pub fn resolve_module(
@@ -15,9 +15,9 @@ pub fn resolve_module(
 
 pub fn resolve_modules(
     modules: Vec<ast::Module>,
-) -> Result<Vec<DeclarationSet>, ResolveError> {
+) -> Result<(Vec<DeclarationSet>, ResolveContext), ResolveError> {
     let mut ctx = ResolveContext::new();
-    Ok(modules
+    Ok((modules
         .into_iter()
         .map(|md| {
             let (decls, new_ctx) = resolve_module(ctx.clone(), md)?;
@@ -27,7 +27,7 @@ pub fn resolve_modules(
         .collect::<Result<Vec<Vec<DeclarationSet>>, ResolveError>>()?
         .into_iter()
         .flatten()
-        .collect())
+        .collect(), ctx))
 }
 
 pub trait ModuleReader {

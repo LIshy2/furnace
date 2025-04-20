@@ -2,11 +2,12 @@ use super::context::ResolveContext;
 use super::error::ResolveError;
 use super::telescope::Telescope;
 use super::term::{resolve_branch, resolve_label, resolve_term};
+use std::rc::Rc;
 
+use crate::ctt::term;
+use crate::ctt::term::DeclarationSet;
 use crate::parser::ast;
-use crate::parser::ast::{AIdent, Label};
-use crate::term;
-use crate::term::DeclarationSet;
+use crate::parser::ast::AIdent;
 
 fn resolve_data(
     ctx: ResolveContext,
@@ -16,18 +17,13 @@ fn resolve_data(
     force_h: bool,
 ) -> Result<DeclarationSet, ResolveError> {
     let telescope = Telescope::from_tele(ctx.clone(), tele)?;
+    let ctx = telescope.context();
 
-    let olabel_ctx = telescope.context().with_var(name.clone());
-    let plabel_ctx = labels
-        .iter()
-        .fold(olabel_ctx.clone(), |ctx, label| match label {
-            Label::OLabel(name, _) => ctx.with_constructor(name.clone()),
-            Label::PLabel(name, _, _, _) => ctx.with_pconstructor(name.clone()),
-        });
+    let name = ctx.resolve_identifier(&name)?;
 
     let labels = labels
         .into_iter()
-        .map(|l| resolve_label(olabel_ctx.clone(), plabel_ctx.clone(), l))
+        .map(|l| resolve_label(ctx.clone(), l))
         .collect::<Result<Vec<term::Label>, ResolveError>>()?;
     let is_h = force_h
         || labels.iter().any(|l| match l {
@@ -35,13 +31,13 @@ fn resolve_data(
             term::Label::PLabel(_, _, _, _) => true,
         });
     let body = if is_h {
-        term::Term::HSum(name.clone(), labels)
+        term::Term::HSum(name, labels)
     } else {
-        term::Term::Sum(name.clone(), labels)
+        term::Term::Sum(name, labels)
     };
 
-    let body = telescope.clone().lambda(|_| Ok(Box::new(body)))?;
-    let tpe = telescope.pi(|_| Ok(Box::new(term::Term::U)))?;
+    let body = telescope.clone().lambda(|_| Ok(Rc::new(body)))?;
+    let tpe = telescope.pi(|_| Ok(Rc::new(term::Term::U)))?;
     Ok(DeclarationSet::Mutual(vec![term::Declaration {
         name,
         tpe,
@@ -50,11 +46,13 @@ fn resolve_data(
 }
 
 fn data_context(ctx: ResolveContext, name: String, labels: &[ast::Label]) -> ResolveContext {
-    let ctx = labels.iter().fold(ctx, |ctx, label| match label {
-        ast::Label::OLabel(name, _) => ctx.with_constructor(name.clone()),
-        ast::Label::PLabel(name, _, _, _) => ctx.with_pconstructor(name.clone()),
-    });
-    ctx.with_var(name)
+    let new_ctx = labels
+        .iter()
+        .fold(ctx.with_var(name), |ctx, label| match label {
+            ast::Label::OLabel(name, _) => ctx.with_constructor(name.clone()),
+            ast::Label::PLabel(name, _, _, _) => ctx.with_pconstructor(name.clone()),
+        });
+    new_ctx
 }
 
 fn resolve_declaration(
@@ -86,42 +84,52 @@ fn resolve_declaration(
             }
             Ok((DeclarationSet::Mutual(mutual), ctx))
         }
-        ast::Decl::Opaque(decl) => Ok((DeclarationSet::Opaque(decl), ctx)),
-        ast::Decl::Transparent(decl) => Ok((DeclarationSet::Transparent(decl), ctx)),
+        ast::Decl::Opaque(decl) => {
+            Ok((DeclarationSet::Opaque(ctx.resolve_identifier(&decl)?), ctx))
+        }
+        ast::Decl::Transparent(decl) => Ok((
+            DeclarationSet::Transparent(ctx.resolve_identifier(&decl)?),
+            ctx,
+        )),
         ast::Decl::TransparentAll => Ok((DeclarationSet::TransparentAll, ctx)),
         ast::Decl::Def(name, tele, tpe, body) => {
             let ctx = ctx.with_var(name.clone());
             let telescope = Telescope::from_tele(ctx.clone(), tele.into_iter())?;
-            let body = telescope.clone().lambda(|ctx| resolve_term(ctx, *body))?;
+            let body = telescope
+                .clone()
+                .lambda(|ctx| resolve_term(ctx.clone(), *body))?;
+
             let tpe = telescope.pi(|ctx| resolve_term(ctx, *tpe))?;
+
             Ok((
-                DeclarationSet::Mutual(vec![term::Declaration { name, tpe, body }]),
+                DeclarationSet::Mutual(vec![term::Declaration {
+                    name: ctx.resolve_identifier(&name)?,
+                    tpe,
+                    body,
+                }]),
                 ctx,
             ))
         }
         ast::Decl::Data(name, tele, labels) => {
-            let data_ctx = data_context(ctx.clone(), name.clone(), &labels);
-            Ok((resolve_data(ctx, name, tele, labels, false)?, data_ctx))
+            let ctx = data_context(ctx.clone(), name.clone(), &labels);
+            Ok((resolve_data(ctx.clone(), name, tele, labels, false)?, ctx))
         }
         ast::Decl::HData(name, tele, labels) => {
-            let data_ctx = data_context(ctx.clone(), name.clone(), &labels);
-            Ok((resolve_data(ctx, name, tele, labels, true)?, data_ctx))
+            let ctx = data_context(ctx.clone(), name.clone(), &labels);
+            Ok((resolve_data(ctx.clone(), name, tele, labels, true)?, ctx))
         }
         ast::Decl::Split(name, tele, tpe, branches) => {
             let ctx = ctx.with_var(name.clone());
+            let name = ctx.resolve_identifier(&name)?;
             let telescope = Telescope::from_tele(ctx.clone(), tele)?;
-            let branch_ctx = telescope.context();
-            let tpe = telescope.clone().pi(|ctx| resolve_term(ctx, *tpe))?;
+            let splitted_tpe = resolve_term(telescope.context(), *tpe)?;
+            let tpe = telescope.clone().pi(|ctx| Ok(splitted_tpe.clone()))?;
             let body = telescope.lambda(|ctx| {
                 let branches = branches
                     .into_iter()
-                    .map(|b| resolve_branch(branch_ctx.clone(), b))
+                    .map(|b| resolve_branch(ctx.clone(), b))
                     .collect::<Result<Vec<term::Branch>, ResolveError>>()?;
-                Ok(Box::new(term::Term::Split(
-                    name.clone(),
-                    tpe.clone(),
-                    branches,
-                )))
+                Ok(Rc::new(term::Term::Split(name, splitted_tpe, branches)))
             })?;
             Ok((
                 DeclarationSet::Mutual(vec![term::Declaration { name, tpe, body }]),
@@ -132,10 +140,11 @@ fn resolve_declaration(
             let telescope = Telescope::from_tele(ctx.clone(), tele)?;
             let tpe = telescope.pi(|ctx| resolve_term(ctx, *tpe))?;
             let def_ctx = ctx.with_var(name.clone());
+            let name = def_ctx.resolve_identifier(&name)?;
             let declaration_set = DeclarationSet::Mutual(vec![term::Declaration {
                 name,
                 tpe: tpe.clone(),
-                body: Box::new(term::Term::Undef(tpe)),
+                body: Rc::new(term::Term::Undef(tpe)),
             }]);
             Ok((declaration_set, def_ctx))
         }

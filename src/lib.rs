@@ -1,4 +1,6 @@
 pub mod parser;
 pub mod resolver;
 
-pub mod term;
+pub mod ctt;
+pub mod typechecker;
+pub mod utils;

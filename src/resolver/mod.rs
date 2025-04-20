@@ -1,4 +1,4 @@
-mod context;
+pub mod context;
 pub mod declaration;
 mod error;
 mod telescope;

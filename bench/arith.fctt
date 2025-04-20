@@ -1,0 +1,33 @@
+module arith where
+{
+  data Z4 =
+    Z
+    | S (pm : Z4)
+    | zeq < i > [(i = 0) -> Z, (i = 1) -> S S S S Z];
+
+  S1 = S Z;
+  S2 = S S Z;
+  S3 = S S S Z;
+
+  data nat =
+    zero
+    | suc (p : nat);
+
+  doubleN : nat -> nat = split
+  {
+    zero -> zero;
+    suc n -> suc (suc (doubleN n))
+  };
+
+  iters : Nat = doubleN (doubleN (doubleN (doubleN (doubleN (doubleN (doubleN (doubleN (doubleN (doubleN (doubleN (doubleN (doubleN (doubleN (doubleN (doubleN (S Z))))))))))))))));
+
+  natToZ4 : nat -> Z4 = split
+  {
+    zero -> Z;
+    suc n -> S (natToZ4 n)
+  };
+
+  data Eval (t : Z4) = ;
+
+  run : Eval (natToZ4 iters) = _
+}

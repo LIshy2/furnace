@@ -1,13 +1,12 @@
 use furnace::parser;
-
-mod tests {
+ mod tests {
     use std::fs;
     use std::io::Read;
     use furnace::parser;
     
     #[test]
     fn parse_examples() {
-        let module_parser = parser::cubicaltt::ModuleParser::new();
+        let module_parser = parser::grammar::ModuleParser::new();
         let entries = fs::read_dir("examples").unwrap();
 
         for entry in entries {

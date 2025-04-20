@@ -1,6 +1,7 @@
 module equiv where
 {
-  import prelude fiber (A B : U) (f : A -> B) (y : B) : U = (x : A) * Path B y (f x);
+  import prelude
+  fiber (A B : U) (f : A -> B) (y : B) : U = (x : A) * Path B y (f x);
   isEquiv (A B : U) (f : A -> B) : U = (y : B) -> isContr (fiber A B f y);
   equiv (A B : U) : U = (f : A -> B) * isEquiv A B f;
   propIsEquiv (A B : U) (f : A -> B) : prop (isEquiv A B f) = \ (u0 u1 : isEquiv A B f) -> < i > \ (y : B) -> propIsContr (fiber A B f y) (u0 y) (u1 y) @ i;
