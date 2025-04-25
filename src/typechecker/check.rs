@@ -5,7 +5,8 @@ use crate::typechecker::context::TypeContext;
 use crate::typechecker::equiv::Equiv;
 use crate::typechecker::error::{ErrorCause, TypeError};
 use crate::typechecker::eval::{
-    app, app_formula, eq_fun, equiv_dom, equiv_fun, eval, eval_system, is_comp_system, Facing,
+    app, app_formula, border, eq_fun, equiv_dom, equiv_fun, eval, eval_system, is_comp_system,
+    Facing,
 };
 use crate::typechecker::infer::{const_path, infer, label_type};
 use crate::utils::intersect;
@@ -39,6 +40,7 @@ fn check_branch(
     ctx: TypeContext,
     label: &Label,
     branch: &Branch,
+    split: Rc<Term>,
     split_tpe: Rc<Term>,
     tpe: Rc<Term>,
 ) -> Result<(), TypeError> {
@@ -47,21 +49,70 @@ fn check_branch(
             let mut branch_ctx = ctx.clone();
             let mut vars = vec![];
             for ((_, tpe), bind) in tele.variables.iter().zip(ns) {
-
                 let var = Rc::new(Term::Var(bind.clone()));
                 vars.push(var.clone());
                 branch_ctx = branch_ctx.with_term(bind, &var, &eval(branch_ctx.clone(), &tpe)?);
             }
-            let res = check(
+            let f_tpe = app(branch_ctx.clone(), split_tpe, Rc::new(Term::Con(c.clone(), vars)))?;
+            // println!("split tpe {:?}", f_tpe);
+            check(
                 branch_ctx.clone(),
                 body.clone(),
-                app(branch_ctx, split_tpe, Rc::new(Term::Con(c.clone(), vars)))?,
-            );
-            res
-
+                f_tpe,
+            )
         }
-        (Label::PLabel(_, _, _, _), Branch::PBranch(_, _, _, _)) => {
-            todo!()
+        (Label::PLabel(_, tele, is, ts), Branch::PBranch(c, ns, js, body)) => {
+            let mut sys_ctx = ctx.clone();
+            for (i, j) in is.iter().zip(js) {
+                sys_ctx = sys_ctx.with_formula(i, Formula::Atom(j.clone()));
+            }
+            for (name, tpe) in &tele.variables {
+                sys_ctx = sys_ctx.with_term(
+                    &name,
+                    &Rc::new(Term::Var(name.clone())),
+                    &eval(sys_ctx.clone(), tpe.as_ref())?,
+                );
+            }
+            let vts = eval_system(sys_ctx.clone(), ts)?;
+            // println!("START CHECK BRANCH SYSTEM {:?}", vts);
+            let vgts = System {
+                binds: intersect(&border(sys_ctx.clone(), split, &vts)?.binds, &vts.binds)
+                    .into_iter()
+                    .map(|(k, (a, b))| Ok((k.clone(), app(sys_ctx.clone(), a.clone(), b.clone())?)))
+                    .collect::<Result<_, TypeError>>()?,
+            };
+            let mut branch_ctx = ctx.clone();
+            let mut vars = vec![];
+            for ((_, tpe), bind) in tele.variables.iter().zip(ns) {
+                let var = Rc::new(Term::Var(bind.clone()));
+                vars.push(var.clone());
+                branch_ctx = branch_ctx.with_term(bind, &var, &eval(branch_ctx.clone(), &tpe)?);
+            }
+            for j in js {
+                branch_ctx = branch_ctx.with_formula(j, Formula::Atom(j.clone()));
+            }
+            check(
+                branch_ctx.clone(),
+                body.clone(),
+                app(
+                    branch_ctx.clone(),
+                    split_tpe,
+                    Rc::new(Term::PCon(
+                        c.clone(),
+                        tpe,
+                        vars,
+                        js.iter().map(|j| Formula::Atom(j.clone())).collect(),
+                    )),
+                )?
+            )?;
+            let ve = eval(branch_ctx.clone(), body)?;
+            // println!("PBRANCH BODY {:?}", body);
+            if Equiv::equiv(branch_ctx.clone(), &border(branch_ctx.clone(), ve.clone(), &vts)?, &vgts)? {
+               Ok(())
+            } else {
+                println!("UNEQ {:?}", vgts);
+                Err(ErrorCause::Hole)?
+            }
         }
         _ => Err(ErrorCause::Hole)?,
     }
@@ -93,11 +144,11 @@ pub fn check_declaration_set(
 
             for decl in decls.iter() {
                 let tpe = eval(new_ctx.clone(), decl.tpe.as_ref())?;
-                println!("decl: {} {:?}: {:?}", decl.name, decl.body, tpe);
-                check(new_ctx.clone(), decl.body.clone(), tpe.clone())?;
+                let pre_ctx = new_ctx.with_term(&decl.name, &decl.body, &tpe);
+                check(pre_ctx.clone(), decl.body.clone(), tpe.clone())?;
                 new_ctx = new_ctx.with_term(
                     &decl.name,
-                    &eval(new_ctx.clone(), decl.body.as_ref())?,
+                    &eval(pre_ctx.clone(), decl.body.as_ref())?,
                     &tpe,
                 );
             }
@@ -184,7 +235,7 @@ pub fn check_plam_system(
             })
             .collect::<Result<_, TypeError>>()?,
     };
-    check_comp_system(ctx, &v)?;
+    check_comp_system(ctx.clone(), &eval_system(ctx.clone(), &ps)?)?;
     Ok(v)
 }
 
@@ -198,7 +249,7 @@ fn check_equiv(ctx: TypeContext, term: Rc<Term>, tpe: Rc<Term>) -> Result<(), Ty
         let s_lit = ctx.fresh();
         let z_lit = ctx.fresh();
 
-        let new_ctx = TypeContext::new().with_term(&a_lit, &term, &tpe);
+        let new_ctx = ctx.with_term(&a_lit, &tpe, &Rc::new(Term::U));
         let t = Rc::new(Term::Var(t_lit));
         let a = Rc::new(Term::Var(a_lit));
         let x = Rc::new(Term::Var(x_lit));
@@ -241,12 +292,12 @@ fn check_equiv(ctx: TypeContext, term: Rc<Term>, tpe: Rc<Term>) -> Result<(), Ty
     check(ctx, term, eq_tpe)
 }
 
-fn check_glue(ctx: TypeContext, term: Rc<Term>, system: &System<Term>) -> Result<(), TypeError> {
+fn check_glue(ctx: TypeContext, tpe: Rc<Term>, system: &System<Term>) -> Result<(), TypeError> {
     for (alpha, t_alpha) in system.binds.iter() {
         check_equiv(
             ctx.clone(),
-            term.clone().face(ctx.clone(), &alpha)?,
             t_alpha.clone(),
+            tpe.clone().face(ctx.clone(), &alpha)?,
         )?;
     }
     check_comp_system(ctx.clone(), &eval_system(ctx, system)?)
@@ -317,14 +368,13 @@ fn check_glue_elem_u(
 }
 
 pub fn check(ctx: TypeContext, term: Rc<Term>, tpe: Rc<Term>) -> Result<(), TypeError> {
-    println!("check? {:?}: {:?}", term.as_ref(), tpe.as_ref());
+    // println!("check? {:?}: {:?}", term.as_ref(), tpe.as_ref());
 
     match (tpe.as_ref(), term.as_ref()) {
         (_, Term::Undef(_)) => Ok(()),
         (_, Term::Hole) => Err(ErrorCause::Hole)?,
         (_, Term::Con(c, cs)) => {
             let con = label_type(c, tpe)?;
-
             let mut con_type = con;
             let mut arg_ctx = ctx.clone();
 
@@ -354,6 +404,7 @@ pub fn check(ctx: TypeContext, term: Rc<Term>, tpe: Rc<Term>) -> Result<(), Type
             Ok(())
         }
         (Term::U, Term::HSum(_, labels)) => {
+            let data = term.clone();
             for label in labels {
                 match label {
                     Label::OLabel(_, tele) => {
@@ -370,7 +421,7 @@ pub fn check(ctx: TypeContext, term: Rc<Term>, tpe: Rc<Term>) -> Result<(), Type
                         });
                         for (face, term) in ts.binds.iter() {
                             let face_ctx = inter_ctx.with_face(face)?;
-                            check(face_ctx, term.clone(), tpe.clone())?
+                            check(face_ctx, term.clone(), data.clone())?
                         }
                     }
                 }
@@ -378,8 +429,7 @@ pub fn check(ctx: TypeContext, term: Rc<Term>, tpe: Rc<Term>) -> Result<(), Type
             Ok(())
         }
         (Term::Pi(lam), Term::Split(_, ty, ces)) => {
-            println!("split {:?} {:?}", ty, tpe);
-            let Term::Lam(_, va, f) = lam.as_ref() else {
+            let Term::Lam(_, va, _) = lam.as_ref() else {
                 Err(ErrorCause::Hole)?
             };
             let cas = match va.as_ref() {
@@ -402,12 +452,14 @@ pub fn check(ctx: TypeContext, term: Rc<Term>, tpe: Rc<Term>) -> Result<(), Type
                     cas.iter()
                         .map(|l| l.name())
                         .collect::<HashSet<Identifier>>(),
-                    ces.iter().map(|b| b.name()).collect::<HashSet<Identifier>>()
+                    ces.iter()
+                        .map(|b| b.name())
+                        .collect::<HashSet<Identifier>>()
                 );
                 Err(ErrorCause::MissingBranch)?;
             }
             for (brc, lbl) in ces.iter().zip(cas) {
-                check_branch(ctx.clone(), lbl, brc, lam.clone(), va.clone())?;
+                check_branch(ctx.clone(), lbl, brc, eval(ctx.clone(), term.as_ref())?, lam.clone(), va.clone())?;
             }
             Ok(())
         }
@@ -447,10 +499,6 @@ pub fn check(ctx: TypeContext, term: Rc<Term>, tpe: Rc<Term>) -> Result<(), Type
         (Term::PathP(p, a0, a1), Term::PLam(name, _)) => {
             let name = name.clone();
 
-            if name == 121838 {
-                println!("AAAA");
-            }
-
             let (u0, u1) = check_plam(ctx.clone(), term, p.clone())?;
 
             let conv = Equiv::equiv(ctx.clone(), a0.clone(), u0.clone())?
@@ -463,9 +511,6 @@ pub fn check(ctx: TypeContext, term: Rc<Term>, tpe: Rc<Term>) -> Result<(), Type
                 println!("CHECKING PATH EQ {:?} =? {:?}", a0, u0);
                 println!("CHECKING PATH EQ {:?} =? {:?}", a1, u1);
 
-
-                println!("{:?}", ctx.lookup_formula(&167905));
-                println!("{:?}", ctx.lookup_formula(&407));
                 Err(ErrorCause::Hole)?
             }
         }
@@ -473,9 +518,10 @@ pub fn check(ctx: TypeContext, term: Rc<Term>, tpe: Rc<Term>) -> Result<(), Type
             check(ctx.clone(), a.clone(), Rc::new(Term::U))?;
             check_glue(ctx.clone(), eval(ctx, a)?, ts)
         }
-        (Term::U, Term::Glue(a, ts)) => {
-            check(ctx.clone(), a.clone(), Rc::new(Term::U))?;
-            check_glue(ctx.clone(), eval(ctx, a)?, ts)
+        (Term::Glue(va, ts), Term::GlueElem(u, us)) => {
+            check(ctx.clone(), u.clone(), va.clone())?;
+            let vu = eval(ctx.clone(), u)?;
+            check_glue_elem(ctx.clone(), vu, ts, us)
         }
         (Term::Comp(tu, va, ves), Term::GlueElem(u, us)) if tu.as_ref() == &Term::U => {
             todo!()
@@ -519,17 +565,8 @@ pub fn check(ctx: TypeContext, term: Rc<Term>, tpe: Rc<Term>) -> Result<(), Type
             todo!()
         }
         _ => {
-            // println!("START INFERENCE IN CHECKER");
-
             let term_tpe = infer(ctx.clone(), term.as_ref())?;
-            // println!("END INFERENCE");
 
-            // println!(
-            //     "eq? {:?} : {:?} === {:?}",
-            //     term.as_ref(),
-            //     term_tpe.as_ref(),
-            //     tpe.as_ref()
-            // );
             if Equiv::equiv(ctx.clone(), term_tpe.clone(), tpe.clone())? {
                 Ok(())
             } else {

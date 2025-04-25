@@ -1,11 +1,14 @@
 use std::collections::HashMap;
+use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::rc::Rc;
 
-pub type Identifier = usize;
+
+#[derive(Copy, Clone, Hash, Eq, PartialEq, Ord, PartialOrd, Debug)]
+pub struct Identifier(pub usize);
 
 pub fn anon_id() -> Identifier {
-    9999999999999
+    Identifier(9999999999999)
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -48,6 +51,7 @@ impl Label {
             Label::PLabel(_, tele, _, _) => tele.clone(),
         }
     }
+
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -120,6 +124,7 @@ impl Formula {
         }
     }
 }
+
 #[derive(Clone, Eq, PartialEq, Debug)]
 pub struct Face {
     pub binds: HashMap<Identifier, Dir>,
@@ -222,6 +227,10 @@ impl<A: Clone> System<A> {
     }
 }
 
+
+
+
+
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Term {
     Pi(Rc<Term>),
@@ -250,7 +259,9 @@ pub enum Term {
     Glue(Rc<Term>, System<Term>),
     GlueElem(Rc<Term>, System<Term>),
     UnGlueElem(Rc<Term>, System<Term>),
+    UnGlueElemU(Rc<Term>, Rc<Term>, System<Term>),
     Id(Rc<Term>, Rc<Term>, Rc<Term>),
     IdPair(Rc<Term>, System<Term>),
     IdJ(Rc<Term>, Rc<Term>, Rc<Term>, Rc<Term>, Rc<Term>, Rc<Term>),
 }
+

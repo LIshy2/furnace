@@ -1,10 +1,12 @@
-use std::collections::HashSet;
-use std::rc::Rc;
 use crate::ctt::term::{Dir, Formula, Identifier, System, Term};
 use crate::typechecker::context::TypeContext;
 use crate::typechecker::error::TypeError;
-use crate::typechecker::eval::{app, app_formula, border, eval, eval_formula, get_first, get_second};
+use crate::typechecker::eval::{
+    app, app_formula, border, eval, eval_formula, get_first, get_second,
+};
 use crate::typechecker::nominal::Nominal;
+use std::collections::HashSet;
+use std::rc::Rc;
 
 pub trait Equiv {
     fn equiv(ctx: TypeContext, lhs: Self, rhs: Self) -> Result<bool, TypeError>;
@@ -18,10 +20,11 @@ impl Equiv for Rc<Term> {
             (l, r) if l == r => Ok(true),
             (Term::Lam(x, a, u), Term::Lam(x_prime, a_prime, u_prime)) => {
                 let y = ctx.fresh();
-                let ctx_lhs = ctx.with_term(x, &Rc::new(Term::Var(y.clone())), a);
-                let ctx_rhs = ctx.with_term(x_prime, &Rc::new(Term::Var(y.clone())), a_prime);
-
                 let eq_ctx = ctx.with_term(&y, &Rc::new(Term::Var(y.clone())), a);
+
+                let ctx_lhs = eq_ctx.with_term(x, &Rc::new(Term::Var(y.clone())), a);
+                let ctx_rhs = eq_ctx.with_term(x_prime, &Rc::new(Term::Var(y.clone())), a_prime);
+
                 Ok(Equiv::equiv(ctx.clone(), a.clone(), a_prime.clone())?
                     && Equiv::equiv(eq_ctx.clone(), eval(ctx_lhs, u)?, eval(ctx_rhs, u_prime)?)?)
             }
@@ -30,10 +33,13 @@ impl Equiv for Rc<Term> {
 
                 Equiv::equiv(
                     new_ctx.clone(),
-                    eval(new_ctx.with_term(&x, &Rc::new(Term::Var(x.clone())), tpe), u)?,
+                    eval(
+                        new_ctx.with_term(&x, &Rc::new(Term::Var(x.clone())), tpe),
+                        u,
+                    )?,
                     app(new_ctx.clone(), rhs, Rc::new(Term::Var(x.clone())))?,
                 )
-            },
+            }
             (_, Term::Lam(x, tpe, u)) => {
                 let new_ctx = ctx.with_term(&x, &Rc::new(Term::Var(x.clone())), tpe);
                 Equiv::equiv(
@@ -52,29 +58,29 @@ impl Equiv for Rc<Term> {
             (Term::Con(c, us), Term::Con(c_prime, us_prime)) => {
                 let field_eq = us.len() == us_prime.len()
                     && us
-                    .iter()
-                    .zip(us_prime.iter())
-                    .fold(Ok::<bool, TypeError>(true), |acc, (l, r)| {
-                        Ok(acc? && Equiv::equiv(ctx.clone(), l.clone(), r.clone())?)
-                    })?;
+                        .iter()
+                        .zip(us_prime.iter())
+                        .fold(Ok::<bool, TypeError>(true), |acc, (l, r)| {
+                            Ok(acc? && Equiv::equiv(ctx.clone(), l.clone(), r.clone())?)
+                        })?;
                 Ok(c == c_prime && field_eq)
             }
             (Term::PCon(c, v, us, phis), Term::PCon(c_prime, v_prime, us_prime, phis_prime)) => {
                 let field_eq = us.len() == us_prime.len()
                     && us
-                    .iter()
-                    .zip(us_prime.iter())
-                    .fold(Ok::<bool, TypeError>(true), |acc, (l, r)| {
-                        Ok(acc? && Equiv::equiv(ctx.clone(), l.clone(), r.clone())?)
-                    })?;
+                        .iter()
+                        .zip(us_prime.iter())
+                        .fold(Ok::<bool, TypeError>(true), |acc, (l, r)| {
+                            Ok(acc? && Equiv::equiv(ctx.clone(), l.clone(), r.clone())?)
+                        })?;
 
                 let interval_eq = phis.len() == phis_prime.len()
                     && phis
-                    .iter()
-                    .zip(phis_prime.iter())
-                    .fold(Ok::<bool, TypeError>(true), |acc, (l, r)| {
-                        Ok(acc? && Equiv::equiv(ctx.clone(), l, r)?)
-                    })?;
+                        .iter()
+                        .zip(phis_prime.iter())
+                        .fold(Ok::<bool, TypeError>(true), |acc, (l, r)| {
+                            Ok(acc? && Equiv::equiv(ctx.clone(), l, r)?)
+                        })?;
 
                 Ok(c == c_prime
                     && field_eq
@@ -150,8 +156,8 @@ impl Equiv for Rc<Term> {
                     && Equiv::equiv(ctx, equivs, equivs_prime)?)
             }
             (Term::GlueElem(u, ts), other) => match (u.as_ref(), other) {
-                (Term::UnGlueElem(b, equivs), _) => {
-                    Ok(Equiv::equiv(ctx.clone(), &border(b.clone(), equivs), ts)?
+                (Term::UnGlueElem(b, equivs), _) | (Term::UnGlueElemU(b, _, equivs), _) => {
+                    Ok(Equiv::equiv(ctx.clone(), &border(ctx.clone(), b.clone(), equivs)?, ts)?
                         && Equiv::equiv(ctx.clone(), b.clone(), rhs)?)
                 }
                 (_, Term::GlueElem(u_prime, us_prime)) => {
@@ -161,9 +167,9 @@ impl Equiv for Rc<Term> {
                 _ => Ok(false),
             },
             (other, Term::GlueElem(u, ts)) => match (u.as_ref(), other) {
-                (Term::UnGlueElem(b, equivs), _) => {
-                    Ok(Equiv::equiv(ctx.clone(), &border(b.clone(), equivs), ts)?
-                        && Equiv::equiv(ctx.clone(), b.clone(), rhs)?)
+                (Term::UnGlueElem(b, equivs), _) | (Term::UnGlueElemU(b, _, equivs), _) => {
+                    Ok(Equiv::equiv(ctx.clone(), &border(ctx.clone(), b.clone(), equivs)?, ts)?
+                        && Equiv::equiv(ctx.clone(), lhs, b.clone())?)
                 }
                 (_, Term::GlueElem(u_prime, us_prime)) => {
                     Ok(Equiv::equiv(ctx.clone(), u.clone(), u_prime.clone())?
@@ -174,12 +180,15 @@ impl Equiv for Rc<Term> {
             (Term::UnGlueElem(u, _), Term::UnGlueElem(u_prime, _)) => {
                 Equiv::equiv(ctx, u.clone(), u_prime.clone())
             }
+            (Term::UnGlueElemU(u, _, _), Term::UnGlueElemU(u_prime, _, _)) => {
+                Equiv::equiv(ctx, u.clone(), u_prime.clone())
+            }
             (Term::Comp(tpe1, u, es), Term::Comp(tpe2, u_prime, es_prime))
-            if tpe1.as_ref() == &Term::U && tpe2.as_ref() == &Term::U =>
-                {
-                    Ok(Equiv::equiv(ctx.clone(), u.clone(), u_prime.clone())?
-                        && Equiv::equiv(ctx, es, es_prime)?)
-                }
+                if tpe1.as_ref() == &Term::U && tpe2.as_ref() == &Term::U =>
+            {
+                Ok(Equiv::equiv(ctx.clone(), u.clone(), u_prime.clone())?
+                    && Equiv::equiv(ctx, es, es_prime)?)
+            }
             (Term::IdPair(v, vs), Term::IdPair(v_prime, vs_prime)) => {
                 Ok(Equiv::equiv(ctx.clone(), v.clone(), v_prime.clone())?
                     && Equiv::equiv(ctx, vs, vs_prime)?)
@@ -243,7 +252,6 @@ impl Equiv for &Formula {
             l_atoms.extend(r_atoms);
             l_atoms.into_iter().collect::<Vec<_>>()
         };
-
 
         fn inner(
             i: usize,

@@ -1,6 +1,7 @@
 module sigma where
 {
-  import equiv lemPathSig (A : U) (B : A -> U) (t u : Sigma A B) : Path U (Path (Sigma A B) t u) ((p : Path A t .1 u .1) * PathP (< i > B (p @ i)) t .2 u .2) = isoPath T0 T1 f g s t where
+  import equiv
+  lemPathSig (A : U) (B : A -> U) (t u : Sigma A B) : Path U (Path (Sigma A B) t u) ((p : Path A t .1 u .1) * PathP (< i > B (p @ i)) t .2 u .2) = isoPath T0 T1 f g s t where
   {
     T0 : U = Path (Sigma A B) t u;
     T1 : U = (p : Path A t .1 u .1) * PathP (< i > B (p @ i)) t .2 u .2;

@@ -3,31 +3,62 @@ module arith where
   data Z4 =
     Z
     | S (pm : Z4)
-    | zeq < i > [(i = 0) -> Z, (i = 1) -> S S S S Z];
+    | zeq < i > [(i = 0) -> Z, (i = 1) -> S (S (S (S Z)))];
 
-  S1 = S Z;
-  S2 = S S Z;
-  S3 = S S S Z;
+  S1 : Z4 = S Z;
+  S2 : Z4 = S (S Z);
+  S3 : Z4 = S (S (S Z));
 
   data nat =
     zero
     | suc (p : nat);
 
-  doubleN : nat -> nat = split
+  Path (A : U) (a0 a1 : A) : U = PathP (< i > A) a0 a1;
+
+  mapOnPath (A B : U) (f : A -> B) (a b : A) (p : Path A a b) : Path B (f a) (f b) = < i > f (p @ i);
+  compPath (A : U) (a b c : A) (p : Path A a b) (q : Path A b c) : Path A a c = < i > comp (< j > A) (p @ i) [(i = 0) -> < j > a, (i = 1) -> q];
+
+  doubleZ4 : Z4 -> Z4 = split
   {
-    zero -> zero;
-    suc n -> suc (suc (doubleN n))
+    Z -> Z;
+    S n -> S (S (doubleZ4 n));
+    zeq @ i ->
+        compPath Z4
+            Z (S (S (S (S Z)))) (S (S (S (S (S (S (S (S Z))))))))
+            (<j> zeq{Z4} @ j)
+            (mapOnPath Z4 Z4 (\(x : Z4) -> (S (S (S (S x))))) Z (S (S (S (S Z)))) (<j> zeq{Z4} @ j)) @ i
   };
 
-  iters : Nat = doubleN (doubleN (doubleN (doubleN (doubleN (doubleN (doubleN (doubleN (doubleN (doubleN (doubleN (doubleN (doubleN (doubleN (doubleN (doubleN (S Z))))))))))))))));
+  iters : Z4 = (doubleZ4 (doubleZ4 (doubleZ4 (doubleZ4 (doubleZ4 (S Z))))));
 
-  natToZ4 : nat -> Z4 = split
+
+  plusNatZ4 : nat -> nat = split
+    {
+    zero -> suc zero;
+    suc n ->
+      (split@ (x : nat) -> nat with
+      {
+        zero -> suc (suc zero);
+        suc n -> (split@ (x : nat) -> nat with
+        {
+          zero -> suc (suc (suc zero));
+          suc n -> (split@ (x : nat) -> nat with
+          {
+            zero -> zero;
+            suc n -> suc zero
+          }) n
+        }) n
+      }) n
+    };
+
+  Z4ToNat : Z4 -> nat = split
   {
-    zero -> Z;
-    suc n -> S (natToZ4 n)
+    Z -> zero;
+    S n -> plusNatZ4 (Z4ToNat n);
+    zeq @ i -> zero
   };
 
   data Eval (t : Z4) = ;
 
-  run : Eval (natToZ4 iters) = _
+  run : Eval (Z4ToNat iters) = undefined
 }

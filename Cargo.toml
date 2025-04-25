@@ -10,3 +10,5 @@ lalrpop = "0.22.1"
 lalrpop-util = { version = "0.22.1", features = ["lexer", "unicode"] }
 rpds = "1.1.0"
 chrono = "0.4.40"
+backtrace-on-stack-overflow = "0.3.0"
+clap = { version = "4.5.37", features = ["derive"] }

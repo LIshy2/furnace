@@ -1,3 +1,5 @@
+#![feature(backtrace_frames)]
+
 pub mod parser;
 pub mod resolver;
 

@@ -19,6 +19,7 @@ fn resolve_data(
     let telescope = Telescope::from_tele(ctx.clone(), tele)?;
     let ctx = telescope.context();
 
+
     let name = ctx.resolve_identifier(&name)?;
 
     let labels = labels

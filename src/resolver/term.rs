@@ -16,7 +16,7 @@ fn where_chain(decls: Vec<DeclarationSet>, head: Rc<Term>) -> Rc<Term> {
 }
 
 fn unique_id() -> Identifier {
-    chrono::offset::Local::now().timestamp_micros() as Identifier
+    Identifier(chrono::offset::Local::now().timestamp_micros() as usize)
 }
 
 fn open_app(t: ast::Term) -> (Box<ast::Term>, Vec<ast::Term>) {
@@ -285,12 +285,13 @@ pub fn resolve_label(
             Ok(Label::OLabel(name, telescope))
         }
         ast::Label::PLabel(name, tele, intervals, system) => {
-            let (telescope, ctx) = Telescope::from_tele(ctx.except(&name), tele)?.resolve();
-            let system_ctx = ctx.with_names(intervals.clone());
+            let id = &name;
             let name = ctx.resolve_identifier(&name)?;
+            let (telescope, ctx) = Telescope::from_tele(ctx.except(id), tele)?.resolve();
+            let system_ctx = ctx.with_names(intervals.clone());
             let intervals = intervals
                 .iter()
-                .map(|i| ctx.resolve_name(i))
+                .map(|i| system_ctx.resolve_name(i))
                 .collect::<Result<_, ResolveError>>()?;
             Ok(Label::PLabel(
                 name,
@@ -353,7 +354,7 @@ fn resolve_system(ctx: ResolveContext, system: ast::System) -> Result<System<Ter
                             ast::Dir::One => (ctx.resolve_name(&f.id)?, Dir::One),
                         })
                     })
-                    .collect::<Result<HashMap<Identifier, Dir>, ResolveError>>()?;
+                    .collect::<Result<_, ResolveError>>()?;
                 Ok((Face { binds: faces }, resolve_term(ctx.clone(), *side.exp)?))
             })
             .collect::<Result<HashMap<Face, Rc<Term>>, ResolveError>>()?,

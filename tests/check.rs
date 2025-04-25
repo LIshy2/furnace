@@ -1,15 +1,16 @@
 mod tests {
-    use furnace::resolver::context::Demangler;
+    use furnace::ctt::term::System;
     use furnace::parser;
     use furnace::parser::ast::Module;
     use furnace::resolver;
+    use furnace::resolver::context::Demangler;
     use furnace::resolver::module::{resolve_modules, ModuleReader};
     use furnace::typechecker::check::check_declaration_set;
     use furnace::typechecker::context::TypeContext;
+    use std::backtrace::Backtrace;
     use std::fs;
     use std::io::Read;
     use std::time::SystemTime;
-    use furnace::ctt::term::System;
 
     struct ExampleModules;
     impl ModuleReader for ExampleModules {
@@ -25,6 +26,9 @@ mod tests {
 
     #[test]
     fn check_examples() {
+
+        unsafe { backtrace_on_stack_overflow::enable() };
+
         let reader = ExampleModules;
         let entries = fs::read_dir("examples").unwrap();
 
@@ -37,12 +41,15 @@ mod tests {
                     &reader,
                     path.file_stem().unwrap().to_str().unwrap(),
                 )
-                    .unwrap();
+                .unwrap();
 
                 let (modules, names) = resolve_modules(deps).unwrap();
                 let mut ctx = TypeContext::new();
 
-                println!("man {}", names.demangle(&276));
+                println!("man {}", names.demangle(&1430)); // v
+                println!("man {}", names.demangle(&1436)); // j
+                println!("man {}", names.demangle(&1415)); // B
+                println!("man {}", names.demangle(&1423)); // b
 
                 for set in modules.iter() {
                     let start_time = SystemTime::now();

@@ -4,7 +4,9 @@ use crate::typechecker::check::{
 };
 use crate::typechecker::context::TypeContext;
 use crate::typechecker::error::{ErrorCause, TypeError};
-use crate::typechecker::eval::{app_formula, comp_line, eval, eval_system, get_first};
+use crate::typechecker::eval::{
+    app_formula, comp_line, eval, eval_formula, eval_system, get_first,
+};
 use std::collections::HashMap;
 use std::rc::Rc;
 
@@ -14,10 +16,14 @@ pub fn const_path(body: Rc<Term>) -> Rc<Term> {
 
 pub fn label_type(name: &Identifier, tpe: Rc<Term>) -> Result<Rc<Term>, TypeError> {
     let binding = tpe.clone();
-    let Term::Sum(_, labels) = binding.as_ref() else {
+    let (Term::Sum(_, labels) | Term::HSum(_, labels)) = binding.as_ref() else {
+        println!("{:?}", tpe);
         Err(ErrorCause::Hole)?
     };
-    let label = labels.iter().find(|p| &p.name() == name).ok_or(ErrorCause::Hole)?;
+    let label = labels
+        .iter()
+        .find(|p| &p.name() == name)
+        .ok_or(ErrorCause::Hole)?;
     let mut res = tpe;
     for (var, tpe) in label.telescope().variables.iter().rev() {
         res = Rc::new(Term::Pi(Rc::new(Term::Lam(var.clone(), tpe.clone(), res))))
@@ -29,10 +35,12 @@ pub fn infer(ctx: TypeContext, term: &Term) -> Result<Rc<Term>, TypeError> {
     // println!("infer!! {:?}", term);
     match term {
         Term::U => Ok(Rc::new(Term::U)),
-        Term::Var(name) => Ok(ctx
-            .lookup_term(name)
-            .ok_or(ErrorCause::UnknownTermName(name.clone()))?
-            .tpe),
+        Term::Var(name) => {
+            Ok(ctx
+                .lookup_term(name)
+                .ok_or(ErrorCause::UnknownTermName(name.clone()))?
+                .tpe)
+        }
         Term::App(f, a) => {
             let fun_tpe = infer(ctx.clone(), f)?;
             // println!("fun_tpe {:?}", fun_tpe);
@@ -81,19 +89,17 @@ pub fn infer(ctx: TypeContext, term: &Term) -> Result<Rc<Term>, TypeError> {
             let Term::PathP(a, _, _) = path_p.as_ref() else {
                 Err(ErrorCause::Hole)?
             };
-            app_formula(ctx.clone(), eval(ctx.clone(), a.as_ref())?, phi.clone())
+            app_formula(
+                ctx.clone(),
+                eval(ctx.clone(), a.as_ref())?,
+                eval_formula(ctx.clone(), phi),
+            )
         }
-        Term::Split(_, tpe, _) => {
-            Ok(tpe.clone())
-        }
+        Term::Split(_, tpe, _) => Ok(eval(ctx.clone(), tpe)?),
         Term::Comp(a, t0, ps) => {
-            // println!("infer comp {:?}", a);
             let (va0, va1) = check_plam(ctx.clone(), a.clone(), const_path(Rc::new(Term::U)))?;
-            // println!("comp plam {:?} - {:?}", va0, va1);
             let va = eval(ctx.clone(), a)?;
-            // println!("comp VA {:?}", va.as_ref());
             check(ctx.clone(), t0.clone(), va0)?;
-            // println!("checking system");
             check_plam_system(ctx, t0.clone(), va, ps)?;
             Ok(va1)
         }
@@ -115,10 +121,11 @@ pub fn infer(ctx: TypeContext, term: &Term) -> Result<Rc<Term>, TypeError> {
             Ok(Rc::new(Term::PathP(va, vt, line)))
         }
         Term::PCon(c, a, es, phis) => {
-            check(ctx.clone(), a.clone(), Rc::new(Term::U))?;
             let va = eval(ctx.clone(), a.as_ref())?;
 
-            let con = label_type(c, a.clone())?;
+            check(ctx.clone(), va.clone(), Rc::new(Term::U))?;
+
+            let con = label_type(c, va.clone())?;
 
             let mut con_type = con;
             let mut arg_ctx = ctx.clone();

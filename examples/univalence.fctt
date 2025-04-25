@@ -46,8 +46,15 @@ module univalence where
     unglueEquiv : isEquiv GlueB B unglueB = \ (b : B) -> let
     {
       ctr : fiber GlueB B unglueB b = (glue (comp (< j > B) b [(i = 0) -> < j > b, (i = 1) -> (w .2 .2 b) .1 .2]) [(i = 0) -> b, (i = 1) -> (w .2 .2 b) .1 .1], fill (< j > B) b [(i = 0) -> < j > b, (i = 1) -> (w .2 .2 b) .1 .2]);
-      contr (v : fiber GlueB B unglueB b) : Path (fiber GlueB B unglueB b) ctr v = < j > (glue (comp (< j > B) b [(i = 0) -> < k > v .2 @ j /\ k, (i = 1) -> ((w .2 .2 b) .2 v @ j) .2, (j = 0) -> fill (< j > B) b [(i = 0) -> < j > b, (i = 1) -> (w .2 .2 b) .1 .2], (j = 1) -> v .2]) [(i = 0) -> v .2 @ j, (i = 1) -> ((w .2 .2 b) .2 v @ j) .1], fill (< j > B) b [(i = 0) -> < l > v .2 @ j /\ l, (i = 1) -> ((w .2 .2 b) .2 v @ j) .2, (j = 0) -> fill (< j > B) b [(i = 0) -> < j > b, (i = 1) -> (w .2 .2 b) .1 .2], (j = 1) -> v .2])
+      contr (v : fiber GlueB B unglueB b) : Path (fiber GlueB B unglueB b) ctr v = < j > (glue (
+        comp (< j > B) b [
+            (i = 0) -> < k > v .2 @ j /\ k,
+            (i = 1) -> ((w .2 .2 b) .2 v @ j) .2,
+            (j = 0) -> fill (< j > B) b [(i = 0) -> < j > b, (i = 1) -> (w .2 .2 b) .1 .2],
+            (j = 1) -> v .2
+            ]) [(i = 0) -> v .2 @ j, (i = 1) -> ((w .2 .2 b) .2 v @ j) .1], fill (< j > B) b [(i = 0) -> < l > v .2 @ j /\ l, (i = 1) -> ((w .2 .2 b) .2 v @ j) .2, (j = 0) -> fill (< j > B) b [(i = 0) -> < j > b, (i = 1) -> (w .2 .2 b) .1 .2], (j = 1) -> v .2])
     }
+
     in (ctr, contr)
   }
   in (GlueB, unglueB, unglueEquiv));

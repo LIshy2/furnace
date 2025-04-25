@@ -25,7 +25,7 @@ impl Generator {
         let res = self.num;
         self.dict.push(name.clone());
         self.num += 1;
-        res
+        term::Identifier(res)
     }
 }
 
@@ -128,8 +128,8 @@ impl ResolveContext {
         if let Some((kind, id)) = self.binds.get(ident) {
             match kind {
                 SymbolKind::Variable => Ok(id.clone()),
-                SymbolKind::Constructor => Ok(id.clone()),
-                SymbolKind::PConstructor | SymbolKind::Name => {
+                SymbolKind::Constructor | SymbolKind::PConstructor => Ok(id.clone()),
+                SymbolKind::Name => {
                     Err(UnresolvedVar(ident.to_string()))
                 }
             }
@@ -153,6 +153,6 @@ pub trait Demangler {
 
 impl Demangler for ResolveContext {
     fn demangle(&self, id: &term::Identifier) -> AIdent {
-        self.counter.borrow().dict[*id].clone()
+        self.counter.borrow().dict[id.0].clone()
     }
 }

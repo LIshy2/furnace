@@ -1,11 +1,12 @@
-use std::backtrace::Backtrace;
+
 use crate::ctt::term::{DeclarationSet, Dir, Face, Formula, Identifier, System, Term};
 use crate::typechecker::error::TypeError;
-use crate::typechecker::eval::{eval, Facing};
+use crate::typechecker::eval::{eval, eval_formula, Facing};
 use rpds::HashTrieMap;
+use std::backtrace::Backtrace;
 use std::cell::RefCell;
 use std::fmt::{Debug, Formatter};
-use std::ops::Add;
+use std::ops::{Add, Deref, DerefMut};
 use std::rc::Rc;
 use std::sync::atomic::AtomicUsize;
 use std::time::{Instant, SystemTime};
@@ -20,7 +21,9 @@ pub struct Entry {
 pub struct TypeContext {
     term_binds: HashTrieMap<Identifier, Entry>,
     formula_binds: HashTrieMap<Identifier, Formula>,
+    face: Face,
     counter: Rc<RefCell<usize>>,
+    to_print: Rc<RefCell<bool>>,
 }
 
 impl Debug for TypeContext {
@@ -49,22 +52,38 @@ impl TypeContext {
         TypeContext {
             term_binds: HashTrieMap::new(),
             formula_binds: HashTrieMap::new(),
+            face: Face::eps(),
             counter: Rc::new(RefCell::new(99999)),
+            to_print: Rc::new(RefCell::new(false)),
         }
+    }
+
+    pub fn start_print(&self) {
+        self.to_print.replace(true);
+    }
+
+    pub fn debug(&self) -> bool {
+        self.to_print.borrow().deref().clone()
     }
 
     pub fn fresh(&self) -> Identifier {
         let res = *self.counter.borrow_mut();
         *self.counter.borrow_mut() += 1;
-        res
+        Identifier(res)
     }
 
     pub fn lookup_term(&self, name: &Identifier) -> Option<Entry> {
-        self.term_binds.get(name).map(|x| x.clone())
+        let e = self.term_binds.get(name).map(|x| x.clone())?;
+        let new_entry = Entry {
+            tpe: e.tpe.face(self.clone(), &self.face).unwrap(),
+            value: e.value.face(self.clone(), &self.face).unwrap(),
+        };
+        Some(new_entry)
     }
 
     pub fn lookup_formula(&self, name: &Identifier) -> Option<Formula> {
-        self.formula_binds.get(name).map(|x| x.clone())
+        let f = self.formula_binds.get(name).map(|x| x.clone())?;
+        Some(f.face(self.clone(), &self.face).unwrap())
     }
 
     pub fn with_term(&self, name: &Identifier, value: &Rc<Term>, tpe: &Rc<Term>) -> TypeContext {
@@ -77,7 +96,9 @@ impl TypeContext {
                 },
             ),
             formula_binds: self.formula_binds.clone(),
+            face: self.face.clone(),
             counter: self.counter.clone(),
+            to_print: self.to_print.clone(),
         }
     }
 
@@ -85,13 +106,7 @@ impl TypeContext {
         let mut res = face.binds.iter().fold(self.clone(), |acc, (k, v)| {
             acc.with_formula(k, Formula::Dir(v.clone()))
         });
-        // let keys = self.term_binds.keys();
-        // for k in keys {
-        //     let mut v = res.term_binds[k].clone();
-        //     v.value = v.value.clone().face(res.clone(), face)?;
-        //     v.tpe = v.tpe.clone().face(res.clone(), face)?;
-        //     res.term_binds = res.term_binds.insert(k.clone(), v);
-        // }
+        res.face = self.face.meet(face);
         Ok(res)
     }
 
@@ -100,6 +115,8 @@ impl TypeContext {
             term_binds: self.term_binds.clone(),
             formula_binds: self.formula_binds.insert(name.clone(), formula),
             counter: self.counter.clone(),
+            face: self.face.clone(),
+            to_print: self.to_print.clone(),
         }
     }
 

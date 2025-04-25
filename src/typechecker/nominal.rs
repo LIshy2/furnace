@@ -1,12 +1,14 @@
+use std::backtrace::Backtrace;
 use crate::ctt::term::{Branch, Face, Formula, Identifier, System, Term};
 use crate::typechecker::context::TypeContext;
 use crate::typechecker::error::TypeError;
 use crate::typechecker::eval::{
     app, app_formula, comp_line, get_first, get_second, glue, glue_elem, hcomp, inv_formula, pcon,
-    unglue_elem, Facing,
+    unglue, unglue_elem, unglue_u, Facing,
 };
 use std::collections::HashMap;
 use std::rc::Rc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 pub trait Nominal: Sized {
     fn support(&self) -> Vec<Identifier>;
@@ -103,6 +105,11 @@ impl Nominal for Rc<Term> {
                 result.extend(t.support());
                 result.extend(system.support());
             }
+            Term::UnGlueElemU(t, b, system) => {
+                result.extend(t.support());
+                result.extend(b.support());
+                result.extend(system.support());
+            }
             Term::Id(t1, t2, t3) => {
                 result.extend(t1.support());
                 result.extend(t2.support());
@@ -127,129 +134,313 @@ impl Nominal for Rc<Term> {
     }
 
     fn act(&self, ctx: TypeContext, i: &Identifier, f: Formula) -> Result<Self, TypeError> {
-        let sphi = f.support();
-        match self.as_ref() {
-            _ if !self.support().contains(i) => Ok(self.clone()),
-            Term::U => Ok(Rc::new(Term::U)),
-            Term::Pi(u) => Ok(Rc::new(Term::Pi(u.act(ctx.clone(), i, f)?))),
-            Term::App(a, b) => app(
-                ctx.clone(),
-                a.act(ctx.clone(), i, f.clone())?,
-                b.act(ctx.clone(), i, f)?,
-            ),
-            Term::Lam(x, t, u) => {
-                let in_body_ctx = ctx.with_term(x, &Rc::new(Term::Var(x.clone())), t);
-                Ok(Rc::new(Term::Lam(
-                    x.clone(),
-                    t.act(ctx.clone(), i, f.clone())?,
-                    u.act(in_body_ctx.clone(), i, f)?,
-                )))
-            }
+        static COUNTER: AtomicUsize = AtomicUsize::new(0);
 
-            Term::Sigma(t) => Ok(Rc::new(Term::Sigma(t.act(ctx.clone(), i, f)?))),
-            Term::Pair(fst, snd) => Ok(Rc::new(Term::Pair(
-                fst.act(ctx.clone(), i, f.clone())?,
-                snd.act(ctx.clone(), i, f)?,
-            ))),
-            Term::Fst(v) => Ok(get_first(v.act(ctx.clone(), i, f)?)),
-            Term::Snd(v) => Ok(get_second(v.act(ctx.clone(), i, f)?)),
-            Term::Con(c, a) => Ok(Rc::new(Term::Con(
-                c.clone(),
-                a.iter()
-                    .map(|x| x.act(ctx.clone(), i, f.clone()))
-                    .collect::<Result<_, TypeError>>()?,
-            ))),
-            Term::PCon(c, t, vs, phis) => pcon(
-                ctx.clone(),
-                c,
-                t.act(ctx.clone(), i, f.clone())?,
-                vs.iter()
-                    .map(|x| x.act(ctx.clone(), i, f.clone()))
-                    .collect::<Result<_, TypeError>>()?,
-                phis.iter()
-                    .map(|x| x.act(ctx.clone(), i, f.clone()))
-                    .collect::<Result<_, TypeError>>()?,
-            ),
-            Term::Split(c, t, b) => Ok(Rc::new(Term::Split(
-                c.clone(),
-                t.act(ctx, i, f)?,
-                b.clone(),
-            ))),
-            Term::PathP(a, u, v) => Ok(Rc::new(Term::PathP(
-                a.act(ctx.clone(), i, f.clone())?,
-                u.act(ctx.clone(), i, f.clone())?,
-                v.act(ctx.clone(), i, f)?,
-            ))),
+        let x = COUNTER.fetch_add(1, Ordering::SeqCst);
+        // if x % 10000 == 0 {
+        //     println!("{x}: act {:?} {:?} {:?}", self, i, f);
+        //     if x == 8849712 {
+        //         println!("{}", Backtrace::capture());
+        //     }
+        // }
+        fn act_formula(
+            ctx: TypeContext,
+            o: &Formula,
+            i: &Identifier,
+            f: Formula,
+        ) -> Result<Option<Formula>, TypeError> {
+            if o.support().contains(i) {
+                Ok(Some(o.act(ctx, i, f)?))
+            } else {
+                Ok(None)
+            }
+        }
+
+        fn act_system(
+            ctx: TypeContext,
+            o: &System<Term>,
+            i: &Identifier,
+            f: Formula,
+        ) -> Result<Option<System<Term>>, TypeError> {
+            if o.support().contains(i) {
+                Ok(Some(o.act(ctx, i, f)?))
+            } else {
+                Ok(None)
+            }
+        }
+
+        match self.as_ref() {
+            Term::Pi(u) => {
+                let new_u = u.act(ctx.clone(), i, f)?;
+                if Rc::ptr_eq(u, &new_u) {
+                    Ok(self.clone())
+                } else {
+                    Ok(Rc::new(Term::Pi(new_u)))
+                }
+            }
+            Term::App(a, b) => {
+                let new_a = a.act(ctx.clone(), i, f.clone())?;
+                let new_b = b.act(ctx.clone(), i, f)?;
+                if Rc::ptr_eq(a, &new_a) && Rc::ptr_eq(b, &new_b) {
+                    Ok(self.clone())
+                } else {
+                    app(ctx.clone(), new_a, new_b)
+                }
+            }
+            Term::Lam(x, t, u) => {
+                let new_t = t.act(ctx.clone(), i, f.clone())?;
+                let in_body_ctx = ctx.with_term(x, &Rc::new(Term::Var(x.clone())), &new_t);
+                let new_u = u.act(in_body_ctx.clone(), i, f)?;
+
+                if Rc::ptr_eq(t, &new_t) && Rc::ptr_eq(u, &new_u) {
+                    Ok(self.clone())
+                } else {
+                    Ok(Rc::new(Term::Lam(x.clone(), new_t, new_u)))
+                }
+            }
+            Term::Sigma(t) => {
+                let new_t = t.act(ctx.clone(), i, f)?;
+                if Rc::ptr_eq(t, &new_t) {
+                    Ok(self.clone())
+                } else {
+                    Ok(Rc::new(Term::Sigma(new_t)))
+                }
+            }
+            Term::Pair(fst, snd) => {
+                let new_fst = fst.act(ctx.clone(), i, f.clone())?;
+                let new_snd = snd.act(ctx.clone(), i, f)?;
+                if Rc::ptr_eq(fst, &new_fst) && Rc::ptr_eq(snd, &new_snd) {
+                    Ok(self.clone())
+                } else {
+                    Ok(Rc::new(Term::Pair(new_fst, new_snd)))
+                }
+            }
+            Term::Fst(v) => {
+                let new_v = v.act(ctx.clone(), i, f)?;
+                if Rc::ptr_eq(v, &new_v) {
+                    Ok(self.clone())
+                } else {
+                    Ok(get_first(new_v))
+                }
+            }
+            Term::Snd(v) => {
+                let new_v = v.act(ctx.clone(), i, f)?;
+                if Rc::ptr_eq(v, &new_v) {
+                    Ok(self.clone())
+                } else {
+                    Ok(get_second(new_v))
+                }
+            }
+            Term::Con(c, a) => {
+                let mut changed = false;
+                let new_a = a
+                    .iter()
+                    .map(|x| {
+                        let new_x = x.act(ctx.clone(), i, f.clone())?;
+                        if !Rc::ptr_eq(x, &new_x) {
+                            changed = true;
+                        }
+                        Ok(new_x)
+                    })
+                    .collect::<Result<Vec<_>, TypeError>>()?;
+
+                if !changed {
+                    Ok(self.clone())
+                } else {
+                    Ok(Rc::new(Term::Con(c.clone(), new_a)))
+                }
+            }
+            Term::PCon(c, t, vs, phis) => {
+                let new_t = t.act(ctx.clone(), i, f.clone())?;
+                let mut changed = !Rc::ptr_eq(t, &new_t);
+
+                let new_vs = vs
+                    .iter()
+                    .map(|x| {
+                        let new_x = x.act(ctx.clone(), i, f.clone())?;
+                        if !Rc::ptr_eq(x, &new_x) {
+                            changed = true;
+                        }
+                        Ok(new_x)
+                    })
+                    .collect::<Result<Vec<_>, TypeError>>()?;
+                let new_phis = phis
+                    .iter()
+                    .map(|x| {
+                        if x.support().contains(i) {
+                            let new_x = x.act(ctx.clone(), i, f.clone())?;
+                            changed = true;
+                            Ok(new_x)
+                        } else {
+                            Ok(x.clone())
+                        }
+                    })
+                    .collect::<Result<Vec<_>, TypeError>>()?;
+
+                if !changed {
+                    Ok(self.clone())
+                } else {
+                    pcon(ctx.clone(), c, new_t, new_vs, new_phis)
+                }
+            }
+            Term::Split(c, t, b) => {
+                let new_t = t.act(ctx, i, f)?;
+                if Rc::ptr_eq(t, &new_t) {
+                    Ok(self.clone())
+                } else {
+                    Ok(Rc::new(Term::Split(c.clone(), new_t, b.clone())))
+                }
+            }
+            Term::PathP(a, u, v) => {
+                let new_a = a.act(ctx.clone(), i, f.clone())?;
+                let new_u = u.act(ctx.clone(), i, f.clone())?;
+                let new_v = v.act(ctx.clone(), i, f)?;
+
+                if Rc::ptr_eq(a, &new_a) && Rc::ptr_eq(u, &new_u) && Rc::ptr_eq(v, &new_v) {
+                    Ok(self.clone())
+                } else {
+                    Ok(Rc::new(Term::PathP(new_a, new_u, new_v)))
+                }
+            }
             Term::PLam(j, v) => {
                 if j == i {
                     Ok(self.clone())
-                } else if sphi.contains(j) {
-                    Ok(Rc::new(Term::PLam(j.clone(), v.act(ctx.clone(), i, f)?)))
                 } else {
-                    let k = ctx.fresh();
-                    let in_body_ctx = ctx.with_formula(&k, Formula::Atom(k));
-                    Ok(Rc::new(Term::PLam(
-                        k.clone(),
-                        v.swap(j, &k).act(in_body_ctx, i, f)?,
-                    )))
+                    let sphi = v.support();
+                    if !sphi.contains(j) {
+
+                    } else {
+
+                    }
+                    let new_v = v.act(ctx.clone(), i, f)?;
+                    if Rc::ptr_eq(v, &new_v) {
+                        Ok(self.clone())
+                    } else {
+                        Ok(Rc::new(Term::PLam(j.clone(), new_v)))
+                    }
                 }
             }
-            Term::AppFormula(b, c) => app_formula(
-                ctx.clone(),
-                b.act(ctx.clone(), i, f.clone())?,
-                c.act(ctx.clone(), i, f.clone())?,
-            ),
-            Term::Comp(a, v, ts) => comp_line(
-                ctx.clone(),
-                a.act(ctx.clone(), i, f.clone())?,
-                v.act(ctx.clone(), i, f.clone())?,
-                ts.act(ctx.clone(), i, f.clone())?,
-            ),
-            Term::HComp(a, u, us) => hcomp(
-                ctx.clone(),
-                a.act(ctx.clone(), i, f.clone())?,
-                u.act(ctx.clone(), i, f.clone())?,
-                us.act(ctx.clone(), i, f.clone())?,
-            ),
-            Term::Glue(a, ts) => Ok(glue(
-                a.act(ctx.clone(), i, f.clone())?,
-                ts.act(ctx.clone(), i, f.clone())?,
-            )),
-            Term::GlueElem(a, ts) => Ok(glue_elem(
-                a.act(ctx.clone(), i, f.clone())?,
-                ts.act(ctx.clone(), i, f.clone())?,
-            )),
-            Term::UnGlueElem(a, ts) => unglue_elem(
-                ctx.clone(),
-                a.act(ctx.clone(), i, f.clone())?,
-                ts.act(ctx.clone(), i, f.clone())?,
-            ),
-            Term::Id(a, u, v) => Ok(Rc::new(Term::Id(
-                a.act(ctx.clone(), i, f.clone())?,
-                u.act(ctx.clone(), i, f.clone())?,
-                v.act(ctx.clone(), i, f.clone())?,
-            ))),
-            Term::IdPair(u, us) => Ok(Rc::new(Term::IdPair(
-                u.act(ctx.clone(), i, f.clone())?,
-                us.act(ctx.clone(), i, f.clone())?,
-            ))),
-            Term::IdJ(a, u, c, d, x, p) => Ok(Rc::new(Term::IdJ(
-                a.act(ctx.clone(), i, f.clone())?,
-                u.act(ctx.clone(), i, f.clone())?,
-                c.act(ctx.clone(), i, f.clone())?,
-                d.act(ctx.clone(), i, f.clone())?,
-                x.act(ctx.clone(), i, f.clone())?,
-                p.act(ctx.clone(), i, f.clone())?,
-            ))),
-            Term::Var(_) => Ok(self.clone()),
-            Term::Sum(_, _) => Ok(self.clone()),
-            Term::HSum(_, _) => Ok(self.clone()),
-            Term::Undef(_) => Ok(self.clone()),
-            Term::Hole => Ok(self.clone()),
+            Term::AppFormula(b, c) => {
+                let new_b = b.act(ctx.clone(), i, f.clone())?;
+                let new_c = act_formula(ctx.clone(), c, i, f.clone())?;
+
+                if Rc::ptr_eq(b, &new_b) && new_c.is_none() {
+                    Ok(self.clone())
+                } else {
+                    app_formula(ctx.clone(), new_b, new_c.unwrap_or(c.clone()))
+                }
+            }
+            Term::Comp(a, v, ts) => {
+                let new_a = a.act(ctx.clone(), i, f.clone())?;
+                let new_v = v.act(ctx.clone(), i, f.clone())?;
+
+                let new_ts = act_system(ctx.clone(), ts, i, f.clone())?;
+
+                if Rc::ptr_eq(a, &new_a) && Rc::ptr_eq(v, &new_v) && new_ts.is_none() {
+                    Ok(self.clone())
+                } else {
+                    comp_line(ctx.clone(), new_a, new_v, new_ts.unwrap_or(ts.clone()))
+                }
+            }
+            Term::HComp(a, u, us) => {
+                let new_a = a.act(ctx.clone(), i, f.clone())?;
+                let new_u = u.act(ctx.clone(), i, f.clone())?;
+
+                let new_us = act_system(ctx.clone(), us, i, f)?;
+
+                if Rc::ptr_eq(a, &new_a) && Rc::ptr_eq(u, &new_u) && new_us.is_none() {
+                    Ok(self.clone())
+                } else {
+                    hcomp(ctx.clone(), new_a, new_u, new_us.unwrap_or(us.clone()))
+                }
+            }
+            Term::Glue(a, ts) => {
+                let new_a = a.act(ctx.clone(), i, f.clone())?;
+                let new_ts = act_system(ctx.clone(), ts, i, f)?;
+
+                if Rc::ptr_eq(a, &new_a) && new_ts.is_none() {
+                    Ok(self.clone())
+                } else {
+                    Ok(glue(new_a, new_ts.unwrap_or(ts.clone())))
+                }
+            }
+            Term::GlueElem(a, ts) => {
+                let new_a = a.act(ctx.clone(), i, f.clone())?;
+                let new_ts = act_system(ctx.clone(), ts, i, f)?;
+                if Rc::ptr_eq(a, &new_a) && new_ts.is_none() {
+                    Ok(self.clone())
+                } else {
+                    Ok(glue_elem(new_a, new_ts.unwrap_or(ts.clone())))
+                }
+            }
+            Term::UnGlueElem(a, ts) => {
+                let new_a = a.act(ctx.clone(), i, f.clone())?;
+                let new_ts = act_system(ctx.clone(), ts, i, f)?;
+
+                if Rc::ptr_eq(a, &new_a) && new_ts.is_none() {
+                    Ok(self.clone())
+                } else {
+                    unglue_elem(ctx.clone(), new_a, new_ts.unwrap_or(ts.clone()))
+                }
+            }
+            Term::UnGlueElemU(a, b, ts) => {
+                let new_a = a.act(ctx.clone(), i, f.clone())?;
+                let new_b = b.act(ctx.clone(), i, f.clone())?;
+                let new_ts = act_system(ctx.clone(), ts, i, f)?;
+
+                if Rc::ptr_eq(a, &new_a) && Rc::ptr_eq(b, &new_b) && new_ts.is_none() {
+                    Ok(self.clone())
+                } else {
+                    unglue_u(ctx.clone(), new_a, new_b, new_ts.unwrap_or(ts.clone()))
+                }
+            }
+            Term::Id(a, u, v) => {
+                let new_a = a.act(ctx.clone(), i, f.clone())?;
+                let new_u = u.act(ctx.clone(), i, f.clone())?;
+                let new_v = v.act(ctx.clone(), i, f.clone())?;
+
+                if Rc::ptr_eq(a, &new_a) && Rc::ptr_eq(u, &new_u) && Rc::ptr_eq(v, &new_v) {
+                    Ok(self.clone())
+                } else {
+                    Ok(Rc::new(Term::Id(new_a, new_u, new_v)))
+                }
+            }
+            Term::IdPair(u, us) => {
+                let new_u = u.act(ctx.clone(), i, f.clone())?;
+                let new_us = act_system(ctx.clone(), us, i, f)?;
+
+                if Rc::ptr_eq(u, &new_u) && new_us.is_none() {
+                    Ok(self.clone())
+                } else {
+                    Ok(Rc::new(Term::IdPair(new_u, new_us.unwrap_or(us.clone()))))
+                }
+            }
+            Term::IdJ(a, u, c, d, x, p) => {
+                let new_a = a.act(ctx.clone(), i, f.clone())?;
+                let new_u = u.act(ctx.clone(), i, f.clone())?;
+                let new_c = c.act(ctx.clone(), i, f.clone())?;
+                let new_d = d.act(ctx.clone(), i, f.clone())?;
+                let new_x = x.act(ctx.clone(), i, f.clone())?;
+                let new_p = p.act(ctx.clone(), i, f.clone())?;
+
+                if Rc::ptr_eq(&a, &new_a)
+                    && Rc::ptr_eq(&u, &new_u)
+                    && Rc::ptr_eq(&c, &new_c)
+                    && Rc::ptr_eq(&d, &new_d)
+                    && Rc::ptr_eq(&x, &new_x)
+                    && Rc::ptr_eq(&p, &new_p)
+                {
+                    Ok(self.clone())
+                } else {
+                    Ok(Rc::new(Term::IdJ(new_a, new_u, new_c, new_d, new_x, new_p)))
+                }
+            }
+            Term::U | Term::Var(_) | Term::Sum(_, _) | Term::HSum(_, _) | Term::Undef(_) | Term::Hole => {
+                Ok(self.clone())
+            }
             _ => panic!("not value"),
         }
     }
-
     fn swap(&self, from: &Identifier, to: &Identifier) -> Self {
         match self.as_ref() {
             Term::U => Rc::new(Term::U),
@@ -270,7 +461,15 @@ impl Nominal for Rc<Term> {
                 vs.iter().map(|x| x.swap(from, to)).collect(),
                 phis.iter().map(|x| x.swap(from, to)).collect(),
             )),
-            Term::Split(c, t, b) => Rc::new(Term::Split(c.clone(), t.swap(from, to), b.clone())),
+            Term::Split(c, t, bs) => {
+                // bs.iter().map(|b| match b {
+                //     Branch::OBranch(n, c, t) => {
+                //
+                //     }
+                //     Branch::PBranch(n, c, i, t) => {}
+                // })
+                Rc::new(Term::Split(c.clone(), t.swap(from, to), bs.clone()))
+            }
             Term::PathP(a, u, v) => Rc::new(Term::PathP(
                 a.swap(from, to),
                 u.swap(from, to),
@@ -302,6 +501,11 @@ impl Nominal for Rc<Term> {
             Term::UnGlueElem(a, ts) => {
                 Rc::new(Term::UnGlueElem(a.swap(from, to), ts.swap(from, to)))
             }
+            Term::UnGlueElemU(a, b, ts) => Rc::new(Term::UnGlueElemU(
+                a.swap(from, to),
+                b.swap(from, to),
+                ts.swap(from, to),
+            )),
             Term::Id(a, u, v) => Rc::new(Term::Id(
                 a.swap(from, to),
                 u.swap(from, to),
