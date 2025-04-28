@@ -1,15 +1,13 @@
-
-use crate::ctt::term::{DeclarationSet, Dir, Face, Formula, Identifier, System, Term};
+use crate::ctt::term::{DeclarationSet, Face, Formula, Identifier, Label};
+use crate::precise::term::Term;
 use crate::typechecker::error::TypeError;
-use crate::typechecker::eval::{eval, eval_formula, Facing};
+use crate::typechecker::eval::{eval, eval_system, Facing};
+use crate::typechecker::heat::PathIndex;
 use rpds::HashTrieMap;
-use std::backtrace::Backtrace;
 use std::cell::RefCell;
 use std::fmt::{Debug, Formatter};
-use std::ops::{Add, Deref, DerefMut};
+use std::ops::Deref;
 use std::rc::Rc;
-use std::sync::atomic::AtomicUsize;
-use std::time::{Instant, SystemTime};
 
 #[derive(Clone, Debug)]
 pub struct Entry {
@@ -23,7 +21,8 @@ pub struct TypeContext {
     formula_binds: HashTrieMap<Identifier, Formula>,
     face: Face,
     counter: Rc<RefCell<usize>>,
-    to_print: Rc<RefCell<bool>>,
+    path_index: Rc<RefCell<PathIndex>>,
+    is_compact: bool,
 }
 
 impl Debug for TypeContext {
@@ -54,16 +53,9 @@ impl TypeContext {
             formula_binds: HashTrieMap::new(),
             face: Face::eps(),
             counter: Rc::new(RefCell::new(99999)),
-            to_print: Rc::new(RefCell::new(false)),
+            path_index: Rc::new(RefCell::new(PathIndex::new())),
+            is_compact: true,
         }
-    }
-
-    pub fn start_print(&self) {
-        self.to_print.replace(true);
-    }
-
-    pub fn debug(&self) -> bool {
-        self.to_print.borrow().deref().clone()
     }
 
     pub fn fresh(&self) -> Identifier {
@@ -86,7 +78,31 @@ impl TypeContext {
         Some(f.face(self.clone(), &self.face).unwrap())
     }
 
+    fn analyze_hsum(&self, hsum: &Rc<Term>) {
+        match hsum.as_ref() {
+            Term::HSum(_, labels, ..) => {
+                for label in labels {
+                    match label {
+                        Label::PLabel(_, _, is, sys) => {
+                            if is.len() == 1 {
+                                if sys.binds.len() == 2 {
+                                    let endpoints = sys.binds.values().collect::<Vec<_>>();
+                                    self.path_index
+                                        .borrow_mut()
+                                        .add(&endpoints[0], &endpoints[1]);
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            _ => (),
+        }
+    }
+
     pub fn with_term(&self, name: &Identifier, value: &Rc<Term>, tpe: &Rc<Term>) -> TypeContext {
+        self.analyze_hsum(value);
         TypeContext {
             term_binds: self.term_binds.insert(
                 name.clone(),
@@ -98,7 +114,8 @@ impl TypeContext {
             formula_binds: self.formula_binds.clone(),
             face: self.face.clone(),
             counter: self.counter.clone(),
-            to_print: self.to_print.clone(),
+            path_index: self.path_index.clone(),
+            is_compact: self.is_compact,
         }
     }
 
@@ -110,17 +127,29 @@ impl TypeContext {
         Ok(res)
     }
 
+    pub fn uncompacted(&self) -> TypeContext {
+        TypeContext {
+            term_binds: self.term_binds.clone(),
+            formula_binds: self.formula_binds.clone(),
+            face: self.face.clone(),
+            counter: self.counter.clone(),
+            path_index: self.path_index.clone(),
+            is_compact: false,
+        }
+    }
+
     pub fn with_formula(&self, name: &Identifier, formula: Formula) -> TypeContext {
         TypeContext {
             term_binds: self.term_binds.clone(),
             formula_binds: self.formula_binds.insert(name.clone(), formula),
             counter: self.counter.clone(),
             face: self.face.clone(),
-            to_print: self.to_print.clone(),
+            path_index: self.path_index.clone(),
+            is_compact: self.is_compact,
         }
     }
 
-    pub fn with_decl_set(&self, decls: &DeclarationSet) -> Result<TypeContext, TypeError> {
+    pub fn with_decl_set(&self, decls: &DeclarationSet<Term>) -> Result<TypeContext, TypeError> {
         let mut new_ctx = self.clone();
         match decls {
             DeclarationSet::Mutual(decls) => {
@@ -135,5 +164,17 @@ impl TypeContext {
             _ => (),
         }
         Ok(new_ctx)
+    }
+
+    pub fn compact(&self, t: &Rc<Term>) -> Rc<Term> {
+        if !self.is_compact {
+            t.clone()
+        } else {
+            let res = self.path_index.borrow_mut().compact(t);
+            if t != &res {
+                // println!("COMPACTED {:?} --> {:?}", t, res)
+            }
+            res
+        }
     }
 }

@@ -12,32 +12,32 @@ pub fn anon_id() -> Identifier {
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
-pub struct Telescope {
-    pub variables: Vec<(Identifier, Rc<Term>)>,
+pub struct Telescope<T> {
+    pub variables: Vec<(Identifier, Rc<T>)>,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
-pub struct Declaration {
+pub struct Declaration<T> {
     pub name: Identifier,
-    pub tpe: Rc<Term>,
-    pub body: Rc<Term>,
+    pub tpe: Rc<T>,
+    pub body: Rc<T>,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
-pub enum DeclarationSet {
-    Mutual(Vec<Declaration>),
+pub enum DeclarationSet<T> {
+    Mutual(Vec<Declaration<T>>),
     Opaque(Identifier),
     Transparent(Identifier),
     TransparentAll,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
-pub enum Label {
-    OLabel(Identifier, Telescope),
-    PLabel(Identifier, Telescope, Vec<Identifier>, System<Term>),
+pub enum Label<T> {
+    OLabel(Identifier, Telescope<T>),
+    PLabel(Identifier, Telescope<T>, Vec<Identifier>, System<T>),
 }
 
-impl Label {
+impl<T: Clone> Label<T> {
     pub fn name(&self) -> Identifier {
         match self {
             Label::OLabel(name, _) => name.clone(),
@@ -45,7 +45,7 @@ impl Label {
         }
     }
 
-    pub fn telescope(&self) -> Telescope {
+    pub fn telescope(&self) -> Telescope<T> {
         match self {
             Label::OLabel(_, tele) => tele.clone(),
             Label::PLabel(_, tele, _, _) => tele.clone(),
@@ -55,12 +55,12 @@ impl Label {
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
-pub enum Branch {
-    OBranch(Identifier, Vec<Identifier>, Rc<Term>),
-    PBranch(Identifier, Vec<Identifier>, Vec<Identifier>, Rc<Term>),
+pub enum Branch<T> {
+    OBranch(Identifier, Vec<Identifier>, Rc<T>),
+    PBranch(Identifier, Vec<Identifier>, Vec<Identifier>, Rc<T>),
 }
 
-impl Branch {
+impl<T> Branch<T> {
     pub fn name(&self) -> Identifier {
         match self {
             Branch::OBranch(name, _, _) => name.clone(),
@@ -228,15 +228,12 @@ impl<A: Clone> System<A> {
 }
 
 
-
-
-
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Term {
     Pi(Rc<Term>),
     App(Rc<Term>, Rc<Term>),
     Lam(Identifier, Rc<Term>, Rc<Term>),
-    Where(Rc<Term>, DeclarationSet),
+    Where(Rc<Term>, DeclarationSet<Term>),
     Var(Identifier),
     U,
     Sigma(Rc<Term>),
@@ -245,9 +242,9 @@ pub enum Term {
     Snd(Rc<Term>),
     Con(Identifier, Vec<Rc<Term>>),
     PCon(Identifier, Rc<Term>, Vec<Rc<Term>>, Vec<Formula>),
-    Split(Identifier, Rc<Term>, Vec<Branch>),
-    Sum(Identifier, Vec<Label>),
-    HSum(Identifier, Vec<Label>),
+    Split(Identifier, Rc<Term>, Vec<Branch<Term>>),
+    Sum(Identifier, Vec<Label<Term>>),
+    HSum(Identifier, Vec<Label<Term>>),
     Undef(Rc<Term>),
     Hole,
     PathP(Rc<Term>, Rc<Term>, Rc<Term>),

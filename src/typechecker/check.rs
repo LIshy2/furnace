@@ -1,6 +1,7 @@
 use crate::ctt::term::{
-    anon_id, Branch, DeclarationSet, Dir, Face, Formula, Identifier, Label, System, Telescope, Term,
+    anon_id, Branch, DeclarationSet, Dir, Face, Formula, Identifier, Label, System, Telescope,
 };
+use crate::precise::term::{Mod, Term};
 use crate::typechecker::context::TypeContext;
 use crate::typechecker::equiv::Equiv;
 use crate::typechecker::error::{ErrorCause, TypeError};
@@ -14,22 +15,22 @@ use std::collections::HashSet;
 use std::rc::Rc;
 
 fn check_family(ctx: TypeContext, f: &Term) -> Result<(), TypeError> {
-    let Term::Lam(name, tpe, body) = f else {
+    let Term::Lam(name, tpe, body, _) = f else {
         todo!()
     };
     let tpe = eval(ctx.clone(), tpe)?;
     check(ctx.clone(), tpe.clone(), Rc::new(Term::U))?;
-    let body_ctx = ctx.with_term(name, &Rc::new(Term::Var(name.clone())), &tpe);
+    let body_ctx = ctx.with_term(name, &Rc::new(Term::Var(name.clone(), Mod::Precise)), &tpe);
     check(body_ctx, body.clone(), Rc::new(Term::U))
 }
 
-fn check_tele(ctx: TypeContext, tele: &Telescope) -> Result<TypeContext, TypeError> {
+fn check_tele(ctx: TypeContext, tele: &Telescope<Term>) -> Result<TypeContext, TypeError> {
     let mut result = ctx;
     for (name, tpe) in tele.variables.iter() {
         check(result.clone(), tpe.clone(), Rc::new(Term::U))?;
         result = result.with_term(
             &name,
-            &Rc::new(Term::Var(name.clone())),
+            &Rc::new(Term::Var(name.clone(), Mod::Precise)),
             &eval(result.clone(), tpe.as_ref())?,
         );
     }
@@ -38,8 +39,8 @@ fn check_tele(ctx: TypeContext, tele: &Telescope) -> Result<TypeContext, TypeErr
 
 fn check_branch(
     ctx: TypeContext,
-    label: &Label,
-    branch: &Branch,
+    label: &Label<Term>,
+    branch: &Branch<Term>,
     split: Rc<Term>,
     split_tpe: Rc<Term>,
     tpe: Rc<Term>,
@@ -49,27 +50,27 @@ fn check_branch(
             let mut branch_ctx = ctx.clone();
             let mut vars = vec![];
             for ((_, tpe), bind) in tele.variables.iter().zip(ns) {
-                let var = Rc::new(Term::Var(bind.clone()));
+                let var = Rc::new(Term::Var(bind.clone(), Mod::Precise));
                 vars.push(var.clone());
                 branch_ctx = branch_ctx.with_term(bind, &var, &eval(branch_ctx.clone(), &tpe)?);
             }
-            let f_tpe = app(branch_ctx.clone(), split_tpe, Rc::new(Term::Con(c.clone(), vars)))?;
-            // println!("split tpe {:?}", f_tpe);
-            check(
+            let f_tpe = app(
                 branch_ctx.clone(),
-                body.clone(),
-                f_tpe,
-            )
+                split_tpe,
+                Rc::new(Term::Con(c.clone(), vars, Mod::Precise)),
+            )?;
+            // println!("split tpe {:?}", f_tpe);
+            check(branch_ctx.clone(), body.clone(), f_tpe)
         }
         (Label::PLabel(_, tele, is, ts), Branch::PBranch(c, ns, js, body)) => {
-            let mut sys_ctx = ctx.clone();
+            let mut sys_ctx = ctx.uncompacted();
             for (i, j) in is.iter().zip(js) {
                 sys_ctx = sys_ctx.with_formula(i, Formula::Atom(j.clone()));
             }
             for (name, tpe) in &tele.variables {
                 sys_ctx = sys_ctx.with_term(
                     &name,
-                    &Rc::new(Term::Var(name.clone())),
+                    &Rc::new(Term::Var(name.clone(), Mod::Precise)),
                     &eval(sys_ctx.clone(), tpe.as_ref())?,
                 );
             }
@@ -81,34 +82,36 @@ fn check_branch(
                     .map(|(k, (a, b))| Ok((k.clone(), app(sys_ctx.clone(), a.clone(), b.clone())?)))
                     .collect::<Result<_, TypeError>>()?,
             };
-            let mut branch_ctx = ctx.clone();
+            let mut branch_ctx = ctx.uncompacted();
             let mut vars = vec![];
             for ((_, tpe), bind) in tele.variables.iter().zip(ns) {
-                let var = Rc::new(Term::Var(bind.clone()));
+                let var = Rc::new(Term::Var(bind.clone(), Mod::Precise));
                 vars.push(var.clone());
                 branch_ctx = branch_ctx.with_term(bind, &var, &eval(branch_ctx.clone(), &tpe)?);
             }
             for j in js {
                 branch_ctx = branch_ctx.with_formula(j, Formula::Atom(j.clone()));
             }
-            check(
+            let b_tpe = app(
                 branch_ctx.clone(),
-                body.clone(),
-                app(
-                    branch_ctx.clone(),
-                    split_tpe,
-                    Rc::new(Term::PCon(
-                        c.clone(),
-                        tpe,
-                        vars,
-                        js.iter().map(|j| Formula::Atom(j.clone())).collect(),
-                    )),
-                )?
+                split_tpe,
+                Rc::new(Term::PCon(
+                    c.clone(),
+                    tpe,
+                    vars,
+                    js.iter().map(|j| Formula::Atom(j.clone())).collect(),
+                    Mod::Precise,
+                )),
             )?;
+            check(branch_ctx.clone(), body.clone(), b_tpe)?;
             let ve = eval(branch_ctx.clone(), body)?;
             // println!("PBRANCH BODY {:?}", body);
-            if Equiv::equiv(branch_ctx.clone(), &border(branch_ctx.clone(), ve.clone(), &vts)?, &vgts)? {
-               Ok(())
+            if Equiv::equiv(
+                branch_ctx.clone(),
+                &border(branch_ctx.clone(), ve.clone(), &vts)?,
+                &vgts,
+            )? {
+                Ok(())
             } else {
                 println!("UNEQ {:?}", vgts);
                 Err(ErrorCause::Hole)?
@@ -136,7 +139,7 @@ pub fn check_formula(ctx: TypeContext, formula: &Formula) -> Result<(), TypeErro
 }
 pub fn check_declaration_set(
     ctx: TypeContext,
-    set: &DeclarationSet,
+    set: &DeclarationSet<Term>,
 ) -> Result<TypeContext, TypeError> {
     match set {
         DeclarationSet::Mutual(decls) => {
@@ -146,11 +149,14 @@ pub fn check_declaration_set(
                 let tpe = eval(new_ctx.clone(), decl.tpe.as_ref())?;
                 let pre_ctx = new_ctx.with_term(&decl.name, &decl.body, &tpe);
                 check(pre_ctx.clone(), decl.body.clone(), tpe.clone())?;
-                new_ctx = new_ctx.with_term(
-                    &decl.name,
-                    &eval(pre_ctx.clone(), decl.body.as_ref())?,
-                    &tpe,
-                );
+                if decl.name == Identifier(42) {
+                    println!("FUCK");
+                }
+                let b = eval(pre_ctx.clone(), decl.body.as_ref())?;
+                if decl.name == Identifier(42) {
+                    println!("{:?}", b);
+                }
+                new_ctx = new_ctx.with_term(&decl.name, &b, &tpe);
             }
             Ok(new_ctx)
         }
@@ -167,7 +173,7 @@ pub fn check_plam(
 ) -> Result<(Rc<Term>, Rc<Term>), TypeError> {
     // println!("CHECKING PLAM {:?} {:?}", term, tpe);
     match term.as_ref() {
-        Term::PLam(int, body) => {
+        Term::PLam(int, body, _) => {
             let new_ctx = ctx.with_formula(&int, Formula::Atom(int.clone()));
             check(
                 new_ctx.clone(),
@@ -188,7 +194,7 @@ pub fn check_plam(
         _ => {
             let vt = infer(ctx.clone(), term.as_ref())?;
             match vt.as_ref() {
-                Term::PathP(a, a0, a1) => {
+                Term::PathP(a, a0, a1, _) => {
                     if Equiv::equiv(ctx, a.clone(), tpe)? {
                         Ok((a0.clone(), a1.clone()))
                     } else {
@@ -250,43 +256,75 @@ fn check_equiv(ctx: TypeContext, term: Rc<Term>, tpe: Rc<Term>) -> Result<(), Ty
         let z_lit = ctx.fresh();
 
         let new_ctx = ctx.with_term(&a_lit, &tpe, &Rc::new(Term::U));
-        let t = Rc::new(Term::Var(t_lit));
-        let a = Rc::new(Term::Var(a_lit));
-        let x = Rc::new(Term::Var(x_lit));
-        let f = Rc::new(Term::Var(f_lit));
-        let y = Rc::new(Term::Var(y_lit));
-        let s = Rc::new(Term::Var(s_lit));
-        let z = Rc::new(Term::Var(z_lit));
-        let fib = Rc::new(Term::Sigma(Rc::new(Term::Lam(
-            y_lit,
-            t.clone(),
-            Rc::new(Term::PathP(
-                Rc::new(Term::PLam(anon_id(), a.clone())),
-                x,
-                Rc::new(Term::App(f, y)),
+        let t = Rc::new(Term::Var(t_lit, Mod::Precise));
+        let a = Rc::new(Term::Var(a_lit, Mod::Precise));
+        let x = Rc::new(Term::Var(x_lit, Mod::Precise));
+        let f = Rc::new(Term::Var(f_lit, Mod::Precise));
+        let y = Rc::new(Term::Var(y_lit, Mod::Precise));
+        let s = Rc::new(Term::Var(s_lit, Mod::Precise));
+        let z = Rc::new(Term::Var(z_lit, Mod::Precise));
+        let fib = Rc::new(Term::Sigma(
+            Rc::new(Term::Lam(
+                y_lit,
+                t.clone(),
+                Rc::new(Term::PathP(
+                    Rc::new(Term::PLam(anon_id(), a.clone(), Mod::Precise)),
+                    x,
+                    Rc::new(Term::App(f, y, Mod::Precise)),
+                    Mod::Precise,
+                )),
+                Mod::Precise,
             )),
-        ))));
-        let iscontrfib = Rc::new(Term::Sigma(Rc::new(Term::Lam(
-            s_lit,
-            fib.clone(),
-            Rc::new(Term::Pi(Rc::new(Term::Lam(
-                z_lit,
+            Mod::Precise,
+        ));
+        let iscontrfib = Rc::new(Term::Sigma(
+            Rc::new(Term::Lam(
+                s_lit,
                 fib.clone(),
-                Rc::new(Term::PathP(Rc::new(Term::PLam(anon_id(), fib)), s, z)),
-            )))),
-        ))));
+                Rc::new(Term::Pi(
+                    Rc::new(Term::Lam(
+                        z_lit,
+                        fib.clone(),
+                        Rc::new(Term::PathP(
+                            Rc::new(Term::PLam(anon_id(), fib, Mod::Precise)),
+                            s,
+                            z,
+                            Mod::Precise,
+                        )),
+                        Mod::Precise,
+                    )),
+                    Mod::Precise,
+                )),
+                Mod::Precise,
+            )),
+            Mod::Precise,
+        ));
 
         eval(
             new_ctx,
-            &Term::Sigma(Rc::new(Term::Lam(
-                t_lit,
-                Rc::new(Term::U),
-                Rc::new(Term::Sigma(Rc::new(Term::Lam(
-                    f_lit,
-                    Rc::new(Term::Pi(Rc::new(Term::Lam(anon_id(), t, a.clone())))),
-                    Rc::new(Term::Pi(Rc::new(Term::Lam(x_lit, a, iscontrfib)))),
-                )))),
-            ))),
+            &Term::Sigma(
+                Rc::new(Term::Lam(
+                    t_lit,
+                    Rc::new(Term::U),
+                    Rc::new(Term::Sigma(
+                        Rc::new(Term::Lam(
+                            f_lit,
+                            Rc::new(Term::Pi(
+                                Rc::new(Term::Lam(anon_id(), t, a.clone(), Mod::Precise)),
+                                Mod::Precise,
+                            )),
+                            Rc::new(Term::Pi(
+                                Rc::new(Term::Lam(x_lit, a, iscontrfib, Mod::Precise)),
+                                Mod::Precise,
+                            )),
+                            Mod::Precise,
+                        )),
+                        Mod::Precise,
+                    )),
+                    Mod::Precise,
+                )),
+                Mod::Precise,
+            ),
         )?
     };
     check(ctx, term, eq_tpe)
@@ -371,18 +409,18 @@ pub fn check(ctx: TypeContext, term: Rc<Term>, tpe: Rc<Term>) -> Result<(), Type
     // println!("check? {:?}: {:?}", term.as_ref(), tpe.as_ref());
 
     match (tpe.as_ref(), term.as_ref()) {
-        (_, Term::Undef(_)) => Ok(()),
+        (_, Term::Undef(_, _)) => Ok(()),
         (_, Term::Hole) => Err(ErrorCause::Hole)?,
-        (_, Term::Con(c, cs)) => {
+        (_, Term::Con(c, cs, _)) => {
             let con = label_type(c, tpe)?;
             let mut con_type = con;
             let mut arg_ctx = ctx.clone();
 
             for arg in cs {
-                let Term::Pi(arg_lam) = &con_type.as_ref() else {
+                let Term::Pi(arg_lam, _) = &con_type.as_ref() else {
                     Err(ErrorCause::Hole)?
                 };
-                let Term::Lam(name, tpe, body) = arg_lam.as_ref() else {
+                let Term::Lam(name, tpe, body, _) = arg_lam.as_ref() else {
                     Err(ErrorCause::Hole)?
                 };
                 let tpe = eval(arg_ctx.clone(), tpe)?;
@@ -392,9 +430,9 @@ pub fn check(ctx: TypeContext, term: Rc<Term>, tpe: Rc<Term>) -> Result<(), Type
             }
             Ok(())
         }
-        (Term::U, Term::Pi(f)) => check_family(ctx, f),
-        (Term::U, Term::Sigma(f)) => check_family(ctx, f),
-        (Term::U, Term::Sum(_, labels)) => {
+        (Term::U, Term::Pi(f, _)) => check_family(ctx, f),
+        (Term::U, Term::Sigma(f, _)) => check_family(ctx, f),
+        (Term::U, Term::Sum(_, labels, _)) => {
             for label in labels {
                 match label {
                     Label::OLabel(_, tele) => check_tele(ctx.clone(), tele).map(|_| ())?,
@@ -403,7 +441,7 @@ pub fn check(ctx: TypeContext, term: Rc<Term>, tpe: Rc<Term>) -> Result<(), Type
             }
             Ok(())
         }
-        (Term::U, Term::HSum(_, labels)) => {
+        (Term::U, Term::HSum(_, labels, _)) => {
             let data = term.clone();
             for label in labels {
                 match label {
@@ -428,13 +466,13 @@ pub fn check(ctx: TypeContext, term: Rc<Term>, tpe: Rc<Term>) -> Result<(), Type
             }
             Ok(())
         }
-        (Term::Pi(lam), Term::Split(_, ty, ces)) => {
-            let Term::Lam(_, va, _) = lam.as_ref() else {
+        (Term::Pi(lam, _), Term::Split(_, ty, ces, _)) => {
+            let Term::Lam(_, va, _, _) = lam.as_ref() else {
                 Err(ErrorCause::Hole)?
             };
             let cas = match va.as_ref() {
-                Term::Sum(_, cas) => cas,
-                Term::HSum(_, cas) => cas,
+                Term::Sum(_, cas, _) => cas,
+                Term::HSum(_, cas, _) => cas,
                 _ => panic!(""),
             };
             check(ctx.clone(), ty.clone(), Rc::new(Term::U))?;
@@ -459,12 +497,19 @@ pub fn check(ctx: TypeContext, term: Rc<Term>, tpe: Rc<Term>) -> Result<(), Type
                 Err(ErrorCause::MissingBranch)?;
             }
             for (brc, lbl) in ces.iter().zip(cas) {
-                check_branch(ctx.clone(), lbl, brc, eval(ctx.clone(), term.as_ref())?, lam.clone(), va.clone())?;
+                check_branch(
+                    ctx.clone(),
+                    lbl,
+                    brc,
+                    eval(ctx.clone(), term.as_ref())?,
+                    lam.clone(),
+                    va.clone(),
+                )?;
             }
             Ok(())
         }
-        (Term::Pi(lam), Term::Lam(x, a, t)) => {
-            let Term::Lam(name, tpe, body) = lam.as_ref() else {
+        (Term::Pi(lam, _), Term::Lam(x, a, t, _)) => {
+            let Term::Lam(name, tpe, body, _) = lam.as_ref() else {
                 Err(ErrorCause::Hole)?
             };
             let a = eval(ctx.clone(), a)?;
@@ -473,13 +518,13 @@ pub fn check(ctx: TypeContext, term: Rc<Term>, tpe: Rc<Term>) -> Result<(), Type
                 Err(ErrorCause::Hole)?;
             }
             let new_ctx = ctx
-                .with_term(&name, &Rc::new(Term::Var(x.clone())), &tpe)
-                .with_term(x, &Rc::new(Term::Var(x.clone())), &tpe);
+                .with_term(&name, &Rc::new(Term::Var(x.clone(), Mod::Precise)), &tpe)
+                .with_term(x, &Rc::new(Term::Var(x.clone(), Mod::Precise)), &tpe);
             let new_result = eval(new_ctx.clone(), body)?;
             check(new_ctx, t.clone(), new_result)
         }
-        (Term::Sigma(lam), Term::Pair(t1, t2)) => {
-            let Term::Lam(name, tpe, body) = lam.as_ref() else {
+        (Term::Sigma(lam, _), Term::Pair(t1, t2, _)) => {
+            let Term::Lam(name, tpe, body, _) = lam.as_ref() else {
                 Err(ErrorCause::Hole)?
             };
             check(ctx.clone(), t1.clone(), eval(ctx.clone(), tpe)?)?;
@@ -487,16 +532,16 @@ pub fn check(ctx: TypeContext, term: Rc<Term>, tpe: Rc<Term>) -> Result<(), Type
             let new_ctx = ctx.with_term(name, &v, tpe);
             check(ctx, t2.clone(), eval(new_ctx, body)?)
         }
-        (_, Term::Where(exp, decls)) => {
+        (_, Term::Where(exp, decls, _)) => {
             let new_ctx = check_declaration_set(ctx, decls)?;
             check(new_ctx, exp.clone(), tpe)
         }
-        (Term::U, Term::PathP(a, e0, e1)) => {
+        (Term::U, Term::PathP(a, e0, e1, _)) => {
             let (a0, a1) = check_plam(ctx.clone(), a.clone(), const_path(Rc::new(Term::U)))?;
             check(ctx.clone(), e0.clone(), a0)?;
             check(ctx.clone(), e1.clone(), a1)
         }
-        (Term::PathP(p, a0, a1), Term::PLam(name, _)) => {
+        (Term::PathP(p, a0, a1, _), Term::PLam(name, _, _)) => {
             let name = name.clone();
 
             let (u0, u1) = check_plam(ctx.clone(), term, p.clone())?;
@@ -514,31 +559,32 @@ pub fn check(ctx: TypeContext, term: Rc<Term>, tpe: Rc<Term>) -> Result<(), Type
                 Err(ErrorCause::Hole)?
             }
         }
-        (Term::U, Term::Glue(a, ts)) => {
+        (Term::U, Term::Glue(a, ts, _)) => {
             check(ctx.clone(), a.clone(), Rc::new(Term::U))?;
             check_glue(ctx.clone(), eval(ctx, a)?, ts)
         }
-        (Term::Glue(va, ts), Term::GlueElem(u, us)) => {
+        (Term::Glue(va, ts, _), Term::GlueElem(u, us, _)) => {
             check(ctx.clone(), u.clone(), va.clone())?;
             let vu = eval(ctx.clone(), u)?;
             check_glue_elem(ctx.clone(), vu, ts, us)
         }
-        (Term::Comp(tu, va, ves), Term::GlueElem(u, us)) if tu.as_ref() == &Term::U => {
+        (Term::Comp(tu, va, ves, _), Term::GlueElem(u, us, _)) if tu.as_ref() == &Term::U => {
             todo!()
         }
-        (Term::U, Term::Id(a, a0, a1)) => {
+        (Term::U, Term::Id(a, a0, a1, _)) => {
             check(ctx.clone(), a.clone(), Rc::new(Term::U))?;
             let va = eval(ctx.clone(), a)?;
             check(ctx.clone(), a0.clone(), va.clone())?;
             check(ctx.clone(), a1.clone(), va)
         }
-        (Term::Id(va, va0, va1), Term::IdPair(w, ts)) => {
+        (Term::Id(va, va0, va1, _), Term::IdPair(w, ts, _)) => {
             check(
                 ctx.clone(),
                 Rc::new(Term::PathP(
                     const_path(va.clone()),
                     va0.clone(),
                     va1.clone(),
+                    Mod::Precise,
                 )),
                 w.clone(),
             )?;
@@ -561,7 +607,7 @@ pub fn check(ctx: TypeContext, term: Rc<Term>, tpe: Rc<Term>) -> Result<(), Type
             }
             Ok(())
         }
-        (_, Term::IdJ(_, _, _, _, _, _)) => {
+        (_, Term::IdJ(_, _, _, _, _, _, _)) => {
             todo!()
         }
         _ => {
@@ -570,6 +616,7 @@ pub fn check(ctx: TypeContext, term: Rc<Term>, tpe: Rc<Term>) -> Result<(), Type
             if Equiv::equiv(ctx.clone(), term_tpe.clone(), tpe.clone())? {
                 Ok(())
             } else {
+                println!("INFER {:?}", term);
                 println!("FAIL {:?} {:?}", term_tpe, tpe);
                 Err(ErrorCause::Hole)?
             }

@@ -4,18 +4,19 @@ use crate::resolver::declaration::resolve_declarations;
 use crate::resolver::error::ResolveError;
 use crate::ctt::term::DeclarationSet;
 use std::collections::HashMap;
+use crate::ctt;
 
 pub fn resolve_module(
     ctx: ResolveContext,
     module: ast::Module,
-) -> Result<(Vec<DeclarationSet>, ResolveContext), ResolveError> {
+) -> Result<(Vec<DeclarationSet<ctt::term::Term>>, ResolveContext), ResolveError> {
     let (decls, ctx) = resolve_declarations(ctx, module.decls)?;
     Ok((decls, ctx))
 }
 
 pub fn resolve_modules(
     modules: Vec<ast::Module>,
-) -> Result<(Vec<DeclarationSet>, ResolveContext), ResolveError> {
+) -> Result<(Vec<DeclarationSet<ctt::term::Term>>, ResolveContext), ResolveError> {
     let mut ctx = ResolveContext::new();
     Ok((modules
         .into_iter()
@@ -24,7 +25,7 @@ pub fn resolve_modules(
             ctx = new_ctx;
             Ok(decls)
         })
-        .collect::<Result<Vec<Vec<DeclarationSet>>, ResolveError>>()?
+        .collect::<Result<Vec<Vec<DeclarationSet<ctt::term::Term>>>, ResolveError>>()?
         .into_iter()
         .flatten()
         .collect(), ctx))

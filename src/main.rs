@@ -1,6 +1,7 @@
 use clap::Parser;
 use furnace::parser;
 use furnace::parser::ast::Module;
+use furnace::precise::analyze::mark_erased;
 use furnace::resolver::module::{build_module_dependencies, resolve_modules, ModuleReader};
 use furnace::typechecker::check::check_declaration_set;
 use furnace::typechecker::context::TypeContext;
@@ -54,9 +55,14 @@ fn main() {
 
         let mut ctx = TypeContext::new();
 
+        let modules = mark_erased(&modules);
+
+        println!("man {:?}", names.demangle(&Identifier(36)));
+
         for set in modules.iter() {
+            println!("{:?}", set);
             let start_time = SystemTime::now();
-            ctx = check_declaration_set(ctx, set).unwrap();
+            ctx = check_declaration_set(ctx, &set).unwrap();
             let end_time = SystemTime::now();
             let x = end_time.duration_since(start_time).unwrap();
             println!("time: {}", x.as_secs_f64());

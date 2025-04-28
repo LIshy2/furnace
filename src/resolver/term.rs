@@ -8,8 +8,9 @@ use crate::parser::ast;
 use crate::resolver::error::ResolveError;
 use std::collections::HashMap;
 use std::rc::Rc;
+use crate::ctt::term;
 
-fn where_chain(decls: Vec<DeclarationSet>, head: Rc<Term>) -> Rc<Term> {
+fn where_chain(decls: Vec<DeclarationSet<Term>>, head: Rc<Term>) -> Rc<Term> {
     decls
         .into_iter()
         .rfold(head, |acc, decl| Rc::new(Term::Where(acc, decl)))
@@ -277,7 +278,7 @@ fn resolve_formula(ctx: ResolveContext, formula: ast::Formula) -> Result<Formula
 pub fn resolve_label(
     ctx: ResolveContext,
     label: ast::Label,
-) -> Result<Label, ResolveError> {
+) -> Result<Label<Term>, ResolveError> {
     match label {
         ast::Label::OLabel(name, tele) => {
             let name = ctx.resolve_identifier(&name)?;
@@ -303,7 +304,7 @@ pub fn resolve_label(
     }
 }
 
-pub fn resolve_branch(ctx: ResolveContext, branch: ast::Branch) -> Result<Branch, ResolveError> {
+pub fn resolve_branch(ctx: ResolveContext, branch: ast::Branch) -> Result<Branch<Term>, ResolveError> {
     match branch {
         ast::Branch::OBranch(name, params, body) => {
             let ctx = ctx.with_vars(params.clone());

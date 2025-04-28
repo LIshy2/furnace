@@ -5,3 +5,4 @@ pub mod check;
 mod eval;
 mod nominal;
 mod equiv;
+mod heat;

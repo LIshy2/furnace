@@ -120,7 +120,7 @@ impl Telescope {
         })
     }
 
-    pub fn resolve(self) -> (term::Telescope, ResolveContext) {
+    pub fn resolve(self) -> (term::Telescope<term::Term>, ResolveContext) {
         let scope = term::Telescope {
             variables: self
                 .scopes

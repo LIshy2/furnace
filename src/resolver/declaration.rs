@@ -15,17 +15,16 @@ fn resolve_data(
     tele: Vec<ast::Tele>,
     labels: Vec<ast::Label>,
     force_h: bool,
-) -> Result<DeclarationSet, ResolveError> {
+) -> Result<DeclarationSet<term::Term>, ResolveError> {
     let telescope = Telescope::from_tele(ctx.clone(), tele)?;
     let ctx = telescope.context();
-
 
     let name = ctx.resolve_identifier(&name)?;
 
     let labels = labels
         .into_iter()
         .map(|l| resolve_label(ctx.clone(), l))
-        .collect::<Result<Vec<term::Label>, ResolveError>>()?;
+        .collect::<Result<Vec<term::Label<term::Term>>, ResolveError>>()?;
     let is_h = force_h
         || labels.iter().any(|l| match l {
             term::Label::OLabel(_, _) => false,
@@ -59,7 +58,7 @@ fn data_context(ctx: ResolveContext, name: String, labels: &[ast::Label]) -> Res
 fn resolve_declaration(
     ctx: ResolveContext,
     decl: ast::Decl,
-) -> Result<(DeclarationSet, ResolveContext), ResolveError> {
+) -> Result<(DeclarationSet<term::Term>, ResolveContext), ResolveError> {
     match decl {
         ast::Decl::Mutual(decls) => {
             let ctx = decls.iter().fold(ctx, |ctx, d| match d {
@@ -129,7 +128,7 @@ fn resolve_declaration(
                 let branches = branches
                     .into_iter()
                     .map(|b| resolve_branch(ctx.clone(), b))
-                    .collect::<Result<Vec<term::Branch>, ResolveError>>()?;
+                    .collect::<Result<Vec<term::Branch<term::Term>>, ResolveError>>()?;
                 Ok(Rc::new(term::Term::Split(name, splitted_tpe, branches)))
             })?;
             Ok((
@@ -155,7 +154,7 @@ fn resolve_declaration(
 pub fn resolve_declarations(
     mut ctx: ResolveContext,
     decls: Vec<ast::Decl>,
-) -> Result<(Vec<DeclarationSet>, ResolveContext), ResolveError> {
+) -> Result<(Vec<DeclarationSet<term::Term>>, ResolveContext), ResolveError> {
     let declaration_sets = decls
         .into_iter()
         .map(|decl| {
@@ -163,6 +162,6 @@ pub fn resolve_declarations(
             ctx = new_ctx;
             Ok(decl)
         })
-        .collect::<Result<Vec<DeclarationSet>, ResolveError>>()?;
+        .collect::<Result<Vec<DeclarationSet<term::Term>>, ResolveError>>()?;
     Ok((declaration_sets, ctx))
 }

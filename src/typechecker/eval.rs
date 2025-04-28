@@ -1,72 +1,81 @@
-use crate::ctt::term::{
-    anon_id, Branch, Dir, Face, Formula, Identifier, Label, System, Telescope, Term,
-};
-use crate::typechecker::check::check_declaration_set;
+use crate::ctt::term::{anon_id, Branch, Dir, Face, Formula, Identifier, Label, System};
+use crate::precise::term::{Mod, Term};
 use crate::typechecker::context::TypeContext;
 use crate::typechecker::equiv::Equiv;
 use crate::typechecker::error::{ErrorCause, TypeError};
-use crate::typechecker::infer::{const_path, infer, label_type};
+use crate::typechecker::infer::{const_path, infer};
 use crate::typechecker::nominal::Nominal;
 use crate::utils::intersect;
-use std::backtrace::Backtrace;
 use std::collections::{HashMap, HashSet};
 use std::hash::Hash;
 use std::rc::Rc;
 
 pub fn eval(ctx: TypeContext, term: &Term) -> Result<Rc<Term>, TypeError> {
     // println!("eval=====> {:?}", term);
-    match term {
+    let res = match term {
         Term::U => Ok(Rc::new(Term::U)),
-        Term::App(fun, arg) => app(
+        Term::App(fun, arg, _) => app(
             ctx.clone(),
             eval(ctx.clone(), fun.as_ref())?,
             eval(ctx.clone(), arg.as_ref())?,
         ),
-        Term::Var(name) => Ok(ctx
+        Term::Var(name, _) => Ok(ctx
             .lookup_term(name)
             .ok_or(ErrorCause::UnknownTermName(name.clone()))?
             .value),
-        Term::Pi(lam) => {
-            let Term::Lam(name, tpe, body) = lam.as_ref() else {
+        Term::Pi(lam, pi_m) => {
+            let Term::Lam(name, tpe, body, lam_m) = lam.as_ref() else {
                 Err(ErrorCause::Hole)?
             };
             let tpe = eval(ctx.clone(), tpe)?;
-            let body_ctx = ctx.with_term(name, &Rc::new(Term::Var(name.clone())), &tpe);
-            Ok(Rc::new(Term::Pi(Rc::new(Term::Lam(
-                name.clone(),
-                tpe,
-                eval(body_ctx, body.as_ref())?,
-            )))))
+            let body_ctx =
+                ctx.with_term(name, &Rc::new(Term::Var(name.clone(), Mod::Precise)), &tpe);
+            Ok(Rc::new(Term::Pi(
+                Rc::new(Term::Lam(
+                    name.clone(),
+                    tpe,
+                    eval(body_ctx, body.as_ref())?,
+                    lam_m.clone(),
+                )),
+                pi_m.clone(),
+            )))
         }
-        Term::Sigma(lam) => {
-            let Term::Lam(name, tpe, body) = lam.as_ref() else {
+        Term::Sigma(lam, si_m) => {
+            let Term::Lam(name, tpe, body, lam_m) = lam.as_ref() else {
                 Err(ErrorCause::Hole)?
             };
-            let body_ctx = ctx.with_term(name, &Rc::new(Term::Var(name.clone())), tpe);
-            Ok(Rc::new(Term::Sigma(Rc::new(Term::Lam(
-                name.clone(),
-                eval(ctx, tpe)?,
-                eval(body_ctx, body.as_ref())?,
-            )))))
+            let body_ctx =
+                ctx.with_term(name, &Rc::new(Term::Var(name.clone(), Mod::Precise)), tpe);
+            Ok(Rc::new(Term::Sigma(
+                Rc::new(Term::Lam(
+                    name.clone(),
+                    eval(ctx.clone(), tpe)?,
+                    eval(body_ctx, body.as_ref())?,
+                    lam_m.clone(),
+                )),
+                si_m.clone(),
+            )))
         }
-        Term::Pair(fst, snd) => Ok(Rc::new(Term::Pair(
+        Term::Pair(fst, snd, m) => Ok(Rc::new(Term::Pair(
             eval(ctx.clone(), fst.as_ref())?,
             eval(ctx.clone(), snd.as_ref())?,
+            m.clone(),
         ))),
-        Term::Fst(pair) => Ok(get_first(eval(ctx, pair)?)),
-        Term::Snd(pair) => Ok(get_second(eval(ctx, pair)?)),
-        Term::Where(body, decls) => {
+        Term::Fst(pair, _) => Ok(get_first(eval(ctx.clone(), pair)?)),
+        Term::Snd(pair, _) => Ok(get_second(eval(ctx.clone(), pair)?)),
+        Term::Where(body, decls, _) => {
             let new_ctx = ctx.with_decl_set(decls)?;
             eval(new_ctx, body)
         }
-        Term::Con(name, fields) => Ok(Rc::new(Term::Con(
+        Term::Con(name, fields, m) => Ok(Rc::new(Term::Con(
             name.clone(),
             fields
                 .iter()
                 .map(|f| eval(ctx.clone(), f))
                 .collect::<Result<_, TypeError>>()?,
+            m.clone(),
         ))),
-        Term::PCon(name, a, fields, intervals) => pcon(
+        Term::PCon(name, a, fields, intervals, m) => pcon(
             ctx.clone(),
             name,
             eval(ctx.clone(), a)?,
@@ -78,27 +87,30 @@ pub fn eval(ctx: TypeContext, term: &Term) -> Result<Rc<Term>, TypeError> {
                 .iter()
                 .map(|f| eval_formula(ctx.clone(), f))
                 .collect(),
+            m.clone(),
         ),
-        Term::Lam(name, tpe, body) => {
+        Term::Lam(name, tpe, body, m) => {
             let tpe = eval(ctx.clone(), tpe)?;
-            let lam_ctx = ctx.with_term(name, &Rc::new(Term::Var(name.clone())), &tpe);
+            let lam_ctx =
+                ctx.with_term(name, &Rc::new(Term::Var(name.clone(), Mod::Precise)), &tpe);
             Ok(Rc::new(Term::Lam(
                 name.clone(),
                 eval(ctx.clone(), tpe.as_ref())?,
                 eval(lam_ctx.clone(), body.as_ref())?,
+                m.clone(),
             )))
         }
-        Term::Split(name, exp, bs) => {
+        Term::Split(name, exp, bs, m) => {
             let split_tpe = eval(ctx.clone(), exp)?;
-            let Term::Pi(lam) = split_tpe.as_ref() else {
+            let Term::Pi(lam, _) = split_tpe.as_ref() else {
                 Err(ErrorCause::Hole)?
             };
-            let Term::Lam(_, sum_tpe, _) = lam.as_ref() else {
+            let Term::Lam(_, sum_tpe, _, _) = lam.as_ref() else {
                 Err(ErrorCause::Hole)?
             };
             let sum_labels = match sum_tpe.as_ref() {
-                Term::Sum(_, labels) => labels,
-                Term::HSum(_, labels) => labels,
+                Term::Sum(_, labels, _) => labels,
+                Term::HSum(_, labels, _) => labels,
                 _ => panic!("Not sum"),
             };
             let bs = bs
@@ -110,7 +122,11 @@ pub fn eval(ctx: TypeContext, term: &Term) -> Result<Rc<Term>, TypeError> {
                         let branch_ctx = ps.iter().zip(label.telescope().variables).fold(
                             ctx.clone(),
                             |acc, (name, (_, tpe))| {
-                                acc.with_term(name, &Rc::new(Term::Var(name.clone())), &tpe)
+                                acc.with_term(
+                                    name,
+                                    &Rc::new(Term::Var(name.clone(), Mod::Precise)),
+                                    &tpe,
+                                )
                             },
                         );
                         Ok(Branch::OBranch(
@@ -125,7 +141,11 @@ pub fn eval(ctx: TypeContext, term: &Term) -> Result<Rc<Term>, TypeError> {
                         let branch_ctx = ps.iter().zip(label.telescope().variables).fold(
                             ctx.clone(),
                             |acc, (name, (_, tpe))| {
-                                acc.with_term(name, &Rc::new(Term::Var(name.clone())), &tpe)
+                                acc.with_term(
+                                    name,
+                                    &Rc::new(Term::Var(name.clone(), Mod::Precise)),
+                                    &tpe,
+                                )
                             },
                         );
                         let branch_ctx = is.iter().fold(branch_ctx, |acc, name| {
@@ -144,78 +164,93 @@ pub fn eval(ctx: TypeContext, term: &Term) -> Result<Rc<Term>, TypeError> {
                 name.clone(),
                 eval(ctx.clone(), exp.as_ref())?,
                 bs,
+                m.clone(),
             )))
         }
-        Term::Sum(name, labels) => {
-            Ok(Rc::new(Term::Sum(name.clone(), labels.clone())))
+        Term::Sum(name, labels, m) => {
+            Ok(Rc::new(Term::Sum(name.clone(), labels.clone(), m.clone())))
         }
-        Term::HSum(name, labels) => {
-                Ok(Rc::new(Term::HSum(name.clone(), labels.clone())))
+        Term::HSum(name, labels, m) => {
+            Ok(Rc::new(Term::HSum(name.clone(), labels.clone(), m.clone())))
         }
-        Term::Undef(tpe) => Ok(Rc::new(Term::Undef(tpe.clone()))),
+        Term::Undef(tpe, m) => Ok(Rc::new(Term::Undef(tpe.clone(), m.clone()))),
         Term::Hole => Ok(Rc::new(Term::Hole)),
-        Term::PathP(a, e0, e1) => Ok(Rc::new(Term::PathP(
+        Term::PathP(a, e0, e1, m) => Ok(Rc::new(Term::PathP(
             eval(ctx.clone(), a)?,
             eval(ctx.clone(), e0)?,
-            eval(ctx, e1)?,
+            eval(ctx.clone(), e1)?,
+            m.clone(),
         ))),
-        Term::PLam(i, t) => {
+        Term::PLam(i, t, m) => {
             let plam_ctx = ctx.with_formula(i, Formula::Atom(i.clone()));
-            Ok(Rc::new(Term::PLam(i.clone(), eval(plam_ctx.clone(), t)?)))
+            Ok(Rc::new(Term::PLam(
+                i.clone(),
+                eval(plam_ctx.clone(), t)?,
+                m.clone(),
+            )))
         }
-        Term::AppFormula(e, phi) => app_formula(
+        Term::AppFormula(e, phi, _) => app_formula(
             ctx.clone(),
             eval(ctx.clone(), e)?,
             eval_formula(ctx.clone(), phi),
         ),
-        Term::Comp(a, t0, ts) => {
+        Term::Comp(a, t0, ts, _) => {
             let a_res = eval(ctx.clone(), a)?;
             let res = comp_line(
                 ctx.clone(),
                 a_res,
                 eval(ctx.clone(), t0)?,
-                eval_system(ctx, ts)?,
+                eval_system(ctx.clone(), ts)?,
             );
             res
         }
-        Term::HComp(a, t0, ts) => hcomp(
+        Term::HComp(a, t0, ts, _) => hcomp(
             ctx.clone(),
             eval(ctx.clone(), a)?,
             eval(ctx.clone(), t0)?,
             eval_system(ctx.clone(), ts)?,
         ),
-        Term::Fill(a, t0, ts) => fill_line(
+        Term::Fill(a, t0, ts, _) => fill_line(
             ctx.clone(),
             eval(ctx.clone(), a)?,
             eval(ctx.clone(), t0)?,
             eval_system(ctx.clone(), ts)?,
         ),
-        Term::Glue(a, ts) => Ok(glue(eval(ctx.clone(), a)?, eval_system(ctx.clone(), ts)?)),
-        Term::GlueElem(a, ts) => Ok(glue_elem(
+        Term::Glue(a, ts, m) => Ok(glue(
             eval(ctx.clone(), a)?,
             eval_system(ctx.clone(), ts)?,
+            m.clone(),
         )),
-        Term::UnGlueElem(a, ts) => unglue_elem(
+        Term::GlueElem(a, ts, m) => Ok(glue_elem(
+            eval(ctx.clone(), a)?,
+            eval_system(ctx.clone(), ts)?,
+            m.clone(),
+        )),
+        Term::UnGlueElem(a, ts, m) => unglue_elem(
             ctx.clone(),
             eval(ctx.clone(), a)?,
             eval_system(ctx.clone(), ts)?,
+            m.clone(),
         ),
-        Term::UnGlueElemU(a, b, ts) => unglue_u(
+        Term::UnGlueElemU(a, b, ts, m) => unglue_u(
             ctx.clone(),
             eval(ctx.clone(), a)?,
             eval(ctx.clone(), b)?,
             eval_system(ctx.clone(), ts)?,
+            m.clone(),
         ),
-        Term::Id(a, r, c) => Ok(Rc::new(Term::Id(
+        Term::Id(a, r, c, m) => Ok(Rc::new(Term::Id(
             eval(ctx.clone(), a)?,
             eval(ctx.clone(), r)?,
             eval(ctx.clone(), c)?,
+            m.clone(),
         ))),
-        Term::IdPair(b, ts) => Ok(Rc::new(Term::IdPair(
+        Term::IdPair(b, ts, m) => Ok(Rc::new(Term::IdPair(
             eval(ctx.clone(), b)?,
             eval_system(ctx.clone(), ts)?,
+            m.clone(),
         ))),
-        Term::IdJ(a, t, c, d, x, p) => idj(
+        Term::IdJ(a, t, c, d, x, p, m) => idj(
             ctx.clone(),
             eval(ctx.clone(), a)?,
             eval(ctx.clone(), t)?,
@@ -225,6 +260,11 @@ pub fn eval(ctx: TypeContext, term: &Term) -> Result<Rc<Term>, TypeError> {
             eval(ctx.clone(), p)?,
         ),
         _ => panic!("UNEVALED {:?}", term),
+    };
+    if term.mode() == Mod::Relaxed {
+        Ok(ctx.compact(&res?))
+    } else {
+        res
     }
 }
 
@@ -237,47 +277,53 @@ fn idj(
     x: Rc<Term>,
     p: Rc<Term>,
 ) -> Result<Rc<Term>, TypeError> {
-    panic!("aa");
-    match p.as_ref() {
-        Term::IdPair(w, ws) => {
-            let i = ctx.fresh();
-            let j = ctx.fresh();
-            let ww = Rc::new(Term::IdPair(
-                Rc::new(Term::PLam(
-                    j.clone(),
-                    app_formula(
-                        ctx.clone(),
-                        w.clone(),
-                        Formula::And(
-                            Box::new(Formula::Atom(i.clone())),
-                            Box::new(Formula::Atom(j)),
-                        ),
-                    )?,
-                )),
-                ws.insert(Face::cond(&i, Dir::Zero), v),
-            ));
-            comp(
-                ctx.clone(),
-                &i,
-                app(
-                    ctx.clone(),
-                    app(
-                        ctx.clone(),
-                        c,
-                        app_formula(ctx.clone(), w.clone(), Formula::Atom(i.clone()))?,
-                    )?,
-                    ww,
-                )?,
-                d.clone(),
-                &border(ctx.clone(), d, &shape(&ws))?,
-            )
-        }
-        _ => Ok(Rc::new(Term::IdJ(a, v, c, d, x, p))),
-    }
+    todo!()
+    // match p.as_ref() {
+    //     Term::IdPair(w, ws, _) => {
+    //         let i = ctx.fresh();
+    //         let j = ctx.fresh();
+    //         let ww = Rc::new(Term::IdPair(
+    //             Rc::new(Term::PLam(
+    //                 j.clone(),
+    //                 app_formula(
+    //                     ctx.clone(),
+    //                     w.clone(),
+    //                     Formula::And(
+    //                         Box::new(Formula::Atom(i.clone())),
+    //                         Box::new(Formula::Atom(j)),
+    //                     ),
+    //                 )?,
+    //             )),
+    //             ws.insert(Face::cond(&i, Dir::Zero), v),
+    //         ));
+    //         comp(
+    //             ctx.clone(),
+    //             &i,
+    //             app(
+    //                 ctx.clone(),
+    //                 app(
+    //                     ctx.clone(),
+    //                     c,
+    //                     app_formula(ctx.clone(), w.clone(), Formula::Atom(i.clone()))?,
+    //                 )?,
+    //                 ww,
+    //             )?,
+    //             d.clone(),
+    //             &border(ctx.clone(), d, &shape(&ws))?,
+    //         )
+    //     }
+    //     _ => Ok(Rc::new(Term::IdJ(a, v, c, d, x, p))),
+    // }
 }
 
-pub fn border<A, B>(ctx: TypeContext, value: Rc<A>, shape: &System<B>) -> Result<System<A>, TypeError>
-where Rc<A>: Facing {
+pub fn border<A, B>(
+    ctx: TypeContext,
+    value: Rc<A>,
+    shape: &System<B>,
+) -> Result<System<A>, TypeError>
+where
+    Rc<A>: Facing,
+{
     Ok(System {
         binds: shape
             .binds
@@ -291,19 +337,19 @@ fn shape<A>(system: &System<A>) -> System<()> {
     todo!()
 }
 
-pub fn glue(v: Rc<Term>, system: System<Term>) -> Rc<Term> {
+pub fn glue(v: Rc<Term>, system: System<Term>, m: Mod) -> Rc<Term> {
     if let Some(result) = system.binds.get(&Face::eps()) {
         equiv_dom(result.clone())
     } else {
-        Rc::new(Term::Glue(v, system))
+        Rc::new(Term::Glue(v, system, m))
     }
 }
 
-pub fn glue_elem(v: Rc<Term>, system: System<Term>) -> Rc<Term> {
+pub fn glue_elem(v: Rc<Term>, system: System<Term>, m: Mod) -> Rc<Term> {
     if let Some(result) = system.binds.get(&Face::eps()) {
         result.clone()
     } else {
-        Rc::new(Term::GlueElem(v, system))
+        Rc::new(Term::GlueElem(v, system, m))
     }
 }
 
@@ -312,13 +358,14 @@ pub fn unglue_u(
     w: Rc<Term>,
     b: Rc<Term>,
     es: System<Term>,
+    m: Mod,
 ) -> Result<Rc<Term>, TypeError> {
     if let Some(result) = es.binds.get(&Face::eps()) {
         eq_fun(ctx, result.clone(), w)
     } else {
         match w.as_ref() {
-            Term::GlueElem(v, _) => Ok(v.clone()),
-            _ => Ok(Rc::new(Term::UnGlueElemU(w, b, es))),
+            Term::GlueElem(v, _, _) => Ok(v.clone()),
+            _ => Ok(Rc::new(Term::UnGlueElemU(w, b, es, m))),
         }
     }
 }
@@ -328,7 +375,7 @@ pub fn unglue(ctx: TypeContext, v: Rc<Term>, system: System<Term>) -> Result<Rc<
         app(ctx, equiv_fun(result.clone()), v)
     } else {
         match v.as_ref() {
-            Term::GlueElem(v, _) => Ok(v.clone()),
+            Term::GlueElem(v, _, _) => Ok(v.clone()),
             _ => panic!("AAAA"),
         }
     }
@@ -338,13 +385,14 @@ pub fn unglue_elem(
     ctx: TypeContext,
     v: Rc<Term>,
     system: System<Term>,
+    m: Mod,
 ) -> Result<Rc<Term>, TypeError> {
     if let Some(result) = system.binds.get(&Face::eps()) {
         app(ctx, equiv_fun(result.clone()), v)
     } else {
         match v.as_ref() {
-            Term::GlueElem(v, _) => Ok(v.clone()),
-            _ => Ok(Rc::new(Term::UnGlueElem(v, system))),
+            Term::GlueElem(v, _, _) => Ok(v.clone()),
+            _ => Ok(Rc::new(Term::UnGlueElem(v, system, m))),
         }
     }
 }
@@ -374,6 +422,7 @@ fn fill_line(
             u,
             new_system,
         )?,
+        Mod::Precise,
     )))
 }
 
@@ -434,7 +483,7 @@ pub fn hcomp(
     if let Some(result) = us.binds.get(&Face::eps()) {
         app_formula(ctx, result.clone(), Formula::Dir(Dir::One))
     } else {
-        Ok(Rc::new(Term::HComp(a, u, us)))
+        Ok(Rc::new(Term::HComp(a, u, us, Mod::Precise)))
     }
 }
 
@@ -564,26 +613,26 @@ pub fn is_comp_system(ctx: TypeContext, system: &System<Term>) -> Result<bool, T
 pub fn app(ctx: TypeContext, fun: Rc<Term>, arg: Rc<Term>) -> Result<Rc<Term>, TypeError> {
     // println!("app==// {:?}/{:?}", fun.as_ref(), arg.as_ref());
     match (fun.as_ref(), arg.as_ref()) {
-        (Term::Lam(x, tpe, body), _) => {
+        (Term::Lam(x, tpe, body, _), _) => {
             let new_ctx = ctx.with_term(&x, &arg, tpe);
             // println!("new sub {:?}", new_ctx);
             eval(new_ctx, body.as_ref())
         }
-        (Term::Split(_, ty, branches), Term::Con(c, vs)) => {
+        (Term::Split(_, ty, branches, _), Term::Con(c, vs, _)) => {
             let branch = branches
                 .iter()
                 .find(|b| &b.name() == c)
                 .ok_or(ErrorCause::Hole)?;
 
-            let Term::Pi(lam) = ty.as_ref() else {
+            let Term::Pi(lam, _) = ty.as_ref() else {
                 Err(ErrorCause::Hole)?
             };
 
-            let Term::Lam(_, data_tpe, _) = lam.as_ref() else {
+            let Term::Lam(_, data_tpe, _, _) = lam.as_ref() else {
                 Err(ErrorCause::Hole)?
             };
 
-            let (Term::Sum(_, labels) | Term::HSum(_, labels)) = data_tpe.as_ref() else {
+            let (Term::Sum(_, labels, _) | Term::HSum(_, labels, _)) = data_tpe.as_ref() else {
                 Err(ErrorCause::Hole)?
             };
 
@@ -606,7 +655,7 @@ pub fn app(ctx: TypeContext, fun: Rc<Term>, arg: Rc<Term>) -> Result<Rc<Term>, T
                 Branch::PBranch(_, _, _, _) => Err(ErrorCause::Hole)?,
             }
         }
-        (Term::Split(_, _, branches), Term::PCon(c, _, us, phis)) => {
+        (Term::Split(_, _, branches, _), Term::PCon(c, _, us, phis, _)) => {
             let branch = branches
                 .iter()
                 .find(|b| &b.name() == c)
@@ -625,10 +674,10 @@ pub fn app(ctx: TypeContext, fun: Rc<Term>, arg: Rc<Term>) -> Result<Rc<Term>, T
                 Branch::OBranch(_, _, _) => Err(ErrorCause::Hole)?,
             }
         }
-        (Term::Split(_, ty, _), Term::HComp(a, w, ws)) => {
+        (Term::Split(_, ty, _, _), Term::HComp(a, w, ws, _)) => {
             let obj = eval(ctx.clone(), ty.as_ref())?;
             match obj.as_ref() {
-                Term::Pi(lam) => {
+                Term::Pi(lam, _) => {
                     let j = ctx.fresh();
                     let wsj = System {
                         binds: ws
@@ -674,18 +723,18 @@ pub fn app(ctx: TypeContext, fun: Rc<Term>, arg: Rc<Term>) -> Result<Rc<Term>, T
                 _ => Err(ErrorCause::Hole)?,
             }
         }
-        (Term::Split(_, _, _), v) if is_neutral(v) => {
-            Ok(Rc::new(Term::App(fun.clone(), arg.clone())))
+        (Term::Split(_, _, _, m), v) if is_neutral(v) => {
+            Ok(Rc::new(Term::App(fun.clone(), arg.clone(), m.clone())))
         }
-        (Term::Comp(plam, li0, ts), _) => {
+        (Term::Comp(plam, li0, ts, _), _) => {
             // println!("Apping comp {:?} {:?}", plam, li0);
-            let Term::PLam(i, pi) = plam.as_ref() else {
+            let Term::PLam(i, pi, _) = plam.as_ref() else {
                 Err(ErrorCause::Hole)?
             };
-            let Term::Pi(lam) = pi.as_ref() else {
+            let Term::Pi(lam, _) = pi.as_ref() else {
                 Err(ErrorCause::Hole)?
             };
-            let Term::Lam(_, a, _) = lam.as_ref() else {
+            let Term::Lam(_, a, _, _) = lam.as_ref() else {
                 Err(ErrorCause::Hole)?
             };
             let f = lam.clone();
@@ -721,7 +770,7 @@ pub fn app(ctx: TypeContext, fun: Rc<Term>, arg: Rc<Term>) -> Result<Rc<Term>, T
                 &System { binds: m },
             )
         }
-        _ if is_neutral(fun.as_ref()) => Ok(Rc::new(Term::App(fun, arg))),
+        _ if is_neutral(fun.as_ref()) => Ok(Rc::new(Term::App(fun, arg, Mod::Precise))),
         _ => {
             println!("fail {:?} {:?}", fun, arg);
             Err(ErrorCause::Hole)?
@@ -731,15 +780,15 @@ pub fn app(ctx: TypeContext, fun: Rc<Term>, arg: Rc<Term>) -> Result<Rc<Term>, T
 
 pub fn get_first(term: Rc<Term>) -> Rc<Term> {
     match term.as_ref() {
-        Term::Pair(fst, _) => fst.clone(),
-        _ => Rc::new(Term::Fst(term)),
+        Term::Pair(fst, _, _) => fst.clone(),
+        _ => Rc::new(Term::Fst(term, Mod::Precise)),
     }
 }
 
 pub fn get_second(term: Rc<Term>) -> Rc<Term> {
     match term.as_ref() {
-        Term::Pair(_, snd) => snd.clone(),
-        _ => Rc::new(Term::Snd(term)),
+        Term::Pair(_, snd, _) => snd.clone(),
+        _ => Rc::new(Term::Snd(term, Mod::Precise)),
     }
 }
 
@@ -822,7 +871,7 @@ fn comp(
         return t.clone().face(ctx, &Face::cond(i, Dir::One));
     }
     match a.as_ref() {
-        Term::PathP(p, v0, v1) => {
+        Term::PathP(p, v0, v1, _) => {
             let j = ctx.fresh();
             let ctx = ctx.with_formula(&j, Formula::Atom(j));
             let system = System {
@@ -848,10 +897,11 @@ fn comp(
                     app_formula(ctx.clone(), u, Formula::Atom(j.clone()))?,
                     &system,
                 )?,
+                Mod::Precise,
             )))
         }
-        Term::Id(b, v0, v1) => match u.as_ref() {
-            Term::IdPair(r, _) /* TODO */ => {
+        Term::Id(b, v0, v1, _) => match u.as_ref() {
+            Term::IdPair(r, _, _) /* TODO */ => {
                 let j = ctx.fresh();
                 let ctx = ctx.with_formula(&j, Formula::Atom(j));
 
@@ -860,7 +910,7 @@ fn comp(
                         .binds
                         .iter()
                         .map(|(k, v)| {
-                            let Term::IdPair(z, _) = v.as_ref() else { Err(ErrorCause::Hole)? };
+                            let Term::IdPair(z, _, _) = v.as_ref() else { Err(ErrorCause::Hole)? };
                             Ok((k.clone(), app_formula(ctx.clone(), z.clone(), Formula::Atom(j.clone()))?))
                         })
                         .collect::<Result<_, TypeError>>()?,
@@ -870,29 +920,30 @@ fn comp(
                 let w = Rc::new(Term::PLam(
                     j.clone(),
                     comp(ctx.clone(), i, b.clone(), app_formula(ctx.clone(), r.clone(), Formula::Atom(j.clone()))?, &system)?,
+                    Mod::Precise
                 ));
                 let sys = ts.clone().face(ctx, &Face::cond(i, Dir::One))?;
                 let mut system_join = HashMap::new();
                 for (_, term) in sys.binds {
-                    let Term::IdPair(_, s) = term.as_ref() else { Err(ErrorCause::Hole)? };
+                    let Term::IdPair(_, s, _) = term.as_ref() else { Err(ErrorCause::Hole)? };
                     for (f, t) in s.binds.iter() {
                         system_join.insert(f.clone(), t.clone());
                     }
                 }
                 Ok(Rc::new(Term::IdPair(w, System {
                     binds: system_join
-                })))
+                }, Mod::Precise)))
             }
             _ => {
                 let system = System {
                     binds: ts.binds.iter().map(|(k, v)|
-                        (k.clone(), Rc::new(Term::PLam(i.clone(), v.clone())))).collect()
+                        (k.clone(), Rc::new(Term::PLam(i.clone(), v.clone(), Mod::Precise)))).collect()
                 };
-                Ok(Rc::new(Term::Comp(Rc::new(Term::PLam(i.clone(), a)), u, system)))
+                Ok(Rc::new(Term::Comp(Rc::new(Term::PLam(i.clone(), a, Mod::Precise)), u, system, Mod::Precise)))
             }
         },
-        Term::Sigma(f) => {
-            let Term::Lam(_, a, _) = f.as_ref() else {
+        Term::Sigma(f, _) => {
+            let Term::Lam(_, a, _, _) = f.as_ref() else {
                 Err(ErrorCause::Hole)?
             };
             let t1s = System {
@@ -920,29 +971,34 @@ fn comp(
                 u2,
                 &t2s,
             )?;
-            Ok(Rc::new(Term::Pair(ui1, comp_u2)))
+            Ok(Rc::new(Term::Pair(ui1, comp_u2, Mod::Precise)))
         }
         Term::U => {
             let ts_ = System {
                 binds: ts
                     .binds
                     .iter()
-                    .map(|(k, v)| (k.clone(), Rc::new(Term::PLam(i.clone(), v.clone()))))
+                    .map(|(k, v)| {
+                        (
+                            k.clone(),
+                            Rc::new(Term::PLam(i.clone(), v.clone(), Mod::Precise)),
+                        )
+                    })
                     .collect(),
             };
             comp_univ(ctx, u, ts_)
         }
-        Term::Comp(univ, a, es)
-            if &Term::PLam(anon_id(), Rc::new(Term::U)) == univ.as_ref()
+        Term::Comp(univ, a, es, _)
+            if &Term::PLam(anon_id(), Rc::new(Term::U), Mod::Precise) == univ.as_ref()
                 && !is_comp_neutral(ctx.clone(), i, es, u.clone(), ts)? =>
         {
             comp_u(ctx, i, a.clone(), es.clone(), u, ts.clone())
         }
-        Term::Glue(b, equivs) if !is_comp_neutral(ctx.clone(), i, equivs, u.clone(), ts)? => {
+        Term::Glue(b, equivs, _) if !is_comp_neutral(ctx.clone(), i, equivs, u.clone(), ts)? => {
             comp_glue(ctx, i, b.clone(), equivs.clone(), u, ts.clone())
         }
-        Term::Sum(_, labels) => match u.as_ref() {
-            Term::Con(n, ns) => {
+        Term::Sum(_, labels, _) => match u.as_ref() {
+            Term::Con(n, ns, _) => {
                 let label = labels.iter().find(|x| &x.name() == n).unwrap();
 
                 let tele = label.telescope();
@@ -957,7 +1013,7 @@ fn comp(
                             .binds
                             .iter()
                             .map(|(k, v)| {
-                                let Term::Con(_, fields) = v.as_ref() else {
+                                let Term::Con(_, fields, _) = v.as_ref() else {
                                     Err(ErrorCause::Hole)?
                                 };
                                 Ok((k.clone(), fields[ind].clone()))
@@ -977,24 +1033,30 @@ fn comp(
                     new_ctx = new_ctx.with_term(name, &v, &infer(new_ctx.clone(), v.as_ref())?);
                     vs.push(vi1);
                 }
-                Ok(Rc::new(Term::Con(n.clone(), vs)))
+                Ok(Rc::new(Term::Con(n.clone(), vs, Mod::Precise)))
             }
             _ => {
                 let system = System {
                     binds: ts
                         .binds
                         .iter()
-                        .map(|(k, v)| (k.clone(), Rc::new(Term::PLam(i.clone(), v.clone()))))
+                        .map(|(k, v)| {
+                            (
+                                k.clone(),
+                                Rc::new(Term::PLam(i.clone(), v.clone(), Mod::Precise)),
+                            )
+                        })
                         .collect(),
                 };
                 Ok(Rc::new(Term::Comp(
-                    Rc::new(Term::PLam(i.clone(), a)),
+                    Rc::new(Term::PLam(i.clone(), a, Mod::Precise)),
                     u,
                     system,
+                    Mod::Precise,
                 )))
             }
         },
-        Term::HSum(_, _) if !is_neutral(u.as_ref()) && !is_system_neutral(ts) => {
+        Term::HSum(_, _, _) if !is_neutral(u.as_ref()) && !is_system_neutral(ts) => {
             comp_hit(ctx, i, a, u, ts.clone())
         }
         _ => {
@@ -1002,13 +1064,19 @@ fn comp(
                 binds: ts
                     .binds
                     .iter()
-                    .map(|(k, v)| (k.clone(), Rc::new(Term::PLam(i.clone(), v.clone()))))
+                    .map(|(k, v)| {
+                        (
+                            k.clone(),
+                            Rc::new(Term::PLam(i.clone(), v.clone(), Mod::Precise)),
+                        )
+                    })
                     .collect(),
             };
             Ok(Rc::new(Term::Comp(
-                Rc::new(Term::PLam(i.clone(), a)),
+                Rc::new(Term::PLam(i.clone(), a, Mod::Precise)),
                 u,
                 system,
+                Mod::Precise,
             )))
         }
     }
@@ -1062,7 +1130,7 @@ fn comp_u(
                 let eqs_face = eqs.clone().face(ctx.clone(), alpha)?;
                 Ok((
                     alpha.clone(),
-                    unglue_u(ctx.clone(), w_alpha.clone(), a_face, eqs_face)?,
+                    unglue_u(ctx.clone(), w_alpha.clone(), a_face, eqs_face, Mod::Precise)?,
                 ))
             })
             .collect::<Result<_, TypeError>>()?,
@@ -1074,6 +1142,7 @@ fn comp_u(
         wi0.clone(),
         a.clone().face(ctx.clone(), &Face::cond(i, Dir::Zero))?,
         eqs.clone().face(ctx.clone(), &Face::cond(i, Dir::Zero))?,
+        Mod::Precise,
     )?;
 
     let vi1_prime = comp(ctx.clone(), i, a.clone(), vi0.clone(), &vs)?;
@@ -1215,7 +1284,7 @@ fn comp_u(
             .collect(),
     };
 
-    Ok(glue_elem(vi1, usi1))
+    Ok(glue_elem(vi1, usi1, Mod::Precise))
 }
 
 fn comp_neg(
@@ -1356,6 +1425,7 @@ fn lem_eq(
                 p1,
                 thetas_,
             )?,
+            Mod::Precise,
         )),
     ))
 }
@@ -1464,7 +1534,7 @@ fn comp_glue(
             .map(|(k, (us_val, ls_val))| {
                 (
                     k.clone(),
-                    Rc::new(Term::Pair(us_val.clone(), ls_val.clone())),
+                    Rc::new(Term::Pair(us_val.clone(), ls_val.clone(), Mod::Precise)),
                 )
             })
             .collect(),
@@ -1485,7 +1555,11 @@ fn comp_glue(
                     .map(|(k, (w_val, v_val))| {
                         (
                             k.clone(),
-                            Rc::new(Term::Pair(w_val.clone(), const_path(v_val.clone()))),
+                            Rc::new(Term::Pair(
+                                w_val.clone(),
+                                const_path(v_val.clone()),
+                                Mod::Precise,
+                            )),
                         )
                     })
                     .collect(),
@@ -1541,7 +1615,7 @@ fn comp_glue(
             .collect(),
     };
 
-    Ok(glue_elem(vi1, usi1))
+    Ok(glue_elem(vi1, usi1, Mod::Precise))
 }
 
 fn comp_hit(
@@ -1568,6 +1642,7 @@ fn comp_hit(
                             a.clone().face(ctx.clone(), alpha)?,
                             u_alpha.clone(),
                         )?,
+                        Mod::Precise,
                     ));
                     Ok((alpha.clone(), v))
                 })
@@ -1583,20 +1658,21 @@ fn squeeze_hit(
     u: Rc<Term>,
 ) -> Result<Rc<Term>, TypeError> {
     let j = ctx.fresh();
-    let Term::HSum(_, labels) = a.as_ref() else {
+    let Term::HSum(_, labels, _) = a.as_ref() else {
         Err(ErrorCause::Hole)?
     };
     match u.as_ref() {
-        Term::Con(n, us) => {
+        Term::Con(n, us, m) => {
             // println!("squeeze_hit {} {:?}", n, labels);
             let label = labels.iter().find(|l| &l.name() == n).unwrap();
             let tele = label.telescope();
             Ok(Rc::new(Term::Con(
                 n.clone(),
                 squeezes(i, &tele.variables, ctx, us)?,
+                m.clone(),
             )))
         }
-        Term::PCon(c, _, ws0, phis) => {
+        Term::PCon(c, _, ws0, phis, m) => {
             let label = labels.iter().find(|l| &l.name() == c).unwrap();
             let tele = label.telescope();
             Ok(pcon(
@@ -1605,9 +1681,10 @@ fn squeeze_hit(
                 a.face(ctx.clone(), &Face::cond(i, Dir::One))?,
                 squeezes(i, &tele.variables, ctx, ws0)?,
                 phis.clone(),
+                m.clone(),
             )?)
         }
-        Term::HComp(_, v, vs) => {
+        Term::HComp(_, v, vs, _) => {
             let ai1 = a.clone().face(ctx.clone(), &Face::cond(i, Dir::One))?;
             let squeezed = squeeze_hit(ctx.clone(), &i, a.clone(), v.clone())?;
 
@@ -1630,6 +1707,7 @@ fn squeeze_hit(
                                         Formula::Atom(j.clone()),
                                     )?,
                                 )?,
+                                Mod::Precise,
                             )),
                         )),
                         Some(Dir::Zero) => Ok((
@@ -1646,6 +1724,7 @@ fn squeeze_hit(
                                         Formula::Atom(j.clone()),
                                     )?,
                                 )?,
+                                Mod::Precise,
                             )),
                         )),
                         Some(Dir::One) => Ok((alpha.clone(), v_alpha.clone())),
@@ -1665,19 +1744,20 @@ fn transp_hit(
     u: Rc<Term>,
 ) -> Result<Rc<Term>, TypeError> {
     let j = ctx.fresh();
-    let Term::HSum(name, labels) = a.as_ref() else {
+    let Term::HSum(name, labels, _) = a.as_ref() else {
         Err(ErrorCause::Hole)?
     };
     match u.as_ref() {
-        Term::Con(n, us) => {
+        Term::Con(n, us, m) => {
             let label = labels.iter().find(|l| &l.name() == n).unwrap();
             let tele = label.telescope();
             Ok(Rc::new(Term::Con(
                 n.clone(),
                 transps(i, tele.variables, ctx, us)?,
+                m.clone(),
             )))
         }
-        Term::PCon(c, _, ws0, phis) => {
+        Term::PCon(c, _, ws0, phis, m) => {
             let label = labels.iter().find(|l| &l.name() == c).unwrap();
             let tele = label.telescope();
             pcon(
@@ -1686,9 +1766,10 @@ fn transp_hit(
                 a.clone().face(ctx.clone(), &Face::cond(i, Dir::One))?,
                 transps(i, tele.variables, ctx, ws0)?,
                 phis.clone(),
+                m.clone(),
             )
         }
-        Term::HComp(_, v, vs) => hcomp(
+        Term::HComp(_, v, vs, _) => hcomp(
             ctx.clone(),
             a.clone().face(ctx.clone(), &Face::cond(i, Dir::One))?,
             transp_hit(ctx.clone(), i, a.clone(), v.clone())?,
@@ -1705,6 +1786,7 @@ fn transp_hit(
                                 a.clone().face(ctx.clone(), alpha)?,
                                 app_formula(ctx.clone(), v_alpha.clone(), Formula::Atom(j))?,
                             )?,
+                            Mod::Precise,
                         ));
                         Ok((alpha.clone(), v))
                     })
@@ -1720,9 +1802,10 @@ fn comp_univ(ctx: TypeContext, b: Rc<Term>, es: System<Term>) -> Result<Rc<Term>
         app_formula(ctx.clone(), res.clone(), Formula::Dir(Dir::One))
     } else {
         Ok(Rc::new(Term::Comp(
-            Rc::new(Term::PLam(anon_id(), Rc::new(Term::U))),
+            Rc::new(Term::PLam(anon_id(), Rc::new(Term::U), Mod::Precise)),
             b.clone(),
             es,
+            Mod::Precise,
         )))
     }
 }
@@ -1737,7 +1820,11 @@ fn path_comp(
 ) -> Result<Rc<Term>, TypeError> {
     let j = ctx.fresh();
     let us_ = us.insert(Face::cond(&j, Dir::One), u);
-    Ok(Rc::new(Term::PLam(j.clone(), comp(ctx, i, a, u0, &us_)?)))
+    Ok(Rc::new(Term::PLam(
+        j.clone(),
+        comp(ctx, i, a, u0, &us_)?,
+        Mod::Precise,
+    )))
 }
 
 pub fn pcon(
@@ -1746,9 +1833,10 @@ pub fn pcon(
     a: Rc<Term>,
     us: Vec<Rc<Term>>,
     phis: Vec<Formula>,
+    m: Mod,
 ) -> Result<Rc<Term>, TypeError> {
     match a.as_ref() {
-        Term::HSum(_, labels) => {
+        Term::HSum(_, labels, _) => {
             let Label::PLabel(_, tele, is, ts) =
                 labels.iter().find(|label| &label.name() == c).unwrap()
             else {
@@ -1767,10 +1855,10 @@ pub fn pcon(
             if let Some(result) = vs.binds.get(&Face::eps()) {
                 Ok(result.clone())
             } else {
-                Ok(Rc::new(Term::PCon(c.clone(), a, us, phis)))
+                Ok(Rc::new(Term::PCon(c.clone(), a, us, phis, m)))
             }
         }
-        _ => Ok(Rc::new(Term::PCon(c.clone(), a, us, phis))),
+        _ => Ok(Rc::new(Term::PCon(c.clone(), a, us, phis, m))),
     }
 }
 
@@ -1875,11 +1963,11 @@ fn mk_fiber_type(
     let f_lit = ctx.fresh();
     let t_lit = ctx.fresh();
 
-    let ta = Rc::new(Term::Var(a_lit));
-    let tx = Rc::new(Term::Var(x_lit));
-    let ty = Rc::new(Term::Var(y_lit));
-    let tf = Rc::new(Term::Var(f_lit));
-    let tt = Rc::new(Term::Var(t_lit));
+    let ta = Rc::new(Term::Var(a_lit, Mod::Precise));
+    let tx = Rc::new(Term::Var(x_lit, Mod::Precise));
+    let ty = Rc::new(Term::Var(y_lit, Mod::Precise));
+    let tf = Rc::new(Term::Var(f_lit, Mod::Precise));
+    let tt = Rc::new(Term::Var(t_lit, Mod::Precise));
     let ctx = ctx
         .with_term(&a_lit, &a, &Rc::new(Term::Hole))
         .with_term(&x_lit, &x, &Rc::new(Term::Hole))
@@ -1888,15 +1976,20 @@ fn mk_fiber_type(
 
     let res = eval(
         ctx,
-        &Term::Sigma(Rc::new(Term::Lam(
-            y_lit,
-            tt,
-            Rc::new(Term::PathP(
-                Rc::new(Term::PLam(anon_id(), ta)),
-                tx,
-                Rc::new(Term::App(tf, ty)),
+        &Term::Sigma(
+            Rc::new(Term::Lam(
+                y_lit,
+                tt,
+                Rc::new(Term::PathP(
+                    Rc::new(Term::PLam(anon_id(), ta, Mod::Precise)),
+                    tx,
+                    Rc::new(Term::App(tf, ty, Mod::Precise)),
+                    Mod::Precise,
+                )),
+                Mod::Precise,
             )),
-        ))),
+            Mod::Precise,
+        ),
     );
     // println!("EVALED");
     res
@@ -1926,18 +2019,18 @@ fn comp_const_line(
 
 fn is_neutral(v: &Term) -> bool {
     match v {
-        Term::Undef(_) => true,
+        Term::Undef(_, _) => true,
         Term::Hole => true,
-        Term::Var(_) => true,
-        Term::Comp(_, _, _) => true,
-        Term::Fst(_) => true,
-        Term::Snd(_) => true,
-        Term::Split(_, _, _) => true,
-        Term::App(_, _) => true,
-        Term::AppFormula(_, _) => true,
-        Term::UnGlueElem(_, _) => true,
-        Term::UnGlueElemU(_, _, _) => true,
-        Term::IdJ(_, _, _, _, _, _) => true,
+        Term::Var(_, _) => true,
+        Term::Comp(_, _, _, _) => true,
+        Term::Fst(_, _) => true,
+        Term::Snd(_, _) => true,
+        Term::Split(_, _, _, _) => true,
+        Term::App(_, _, _) => true,
+        Term::AppFormula(_, _, _) => true,
+        Term::UnGlueElem(_, _, _) => true,
+        Term::UnGlueElemU(_, _, _, _) => true,
+        Term::IdJ(_, _, _, _, _, _, _) => true,
         _ => false,
     }
 }
@@ -1996,14 +2089,14 @@ pub fn app_formula(
     formula: Formula,
 ) -> Result<Rc<Term>, TypeError> {
     match term.as_ref() {
-        Term::PLam(i, u) => u.act(ctx.clone(), i, formula),
-        Term::Hole => Ok(Rc::new(Term::AppFormula(term, formula))),
+        Term::PLam(i, u, _) => u.act(ctx.clone(), i, formula),
+        Term::Hole => Ok(Rc::new(Term::AppFormula(term, formula, Mod::Precise))),
         v if is_neutral(v) => {
             let tpe = infer_type(ctx, v)?;
             match (tpe.as_ref(), formula) {
-                (Term::PathP(_, a0, _), Formula::Dir(Dir::Zero)) => Ok(a0.clone()),
-                (Term::PathP(_, _, a1), Formula::Dir(Dir::One)) => Ok(a1.clone()),
-                (_, phi) => Ok(Rc::new(Term::AppFormula(term.clone(), phi))),
+                (Term::PathP(_, a0, _, _), Formula::Dir(Dir::Zero)) => Ok(a0.clone()),
+                (Term::PathP(_, _, a1, _), Formula::Dir(Dir::One)) => Ok(a1.clone()),
+                (_, phi) => Ok(Rc::new(Term::AppFormula(term.clone(), phi, Mod::Precise))),
             }
         }
         e => {
@@ -2016,13 +2109,13 @@ pub fn app_formula(
 fn infer_type(ctx: TypeContext, v: &Term) -> Result<Rc<Term>, TypeError> {
     // println!("infer type {:?}", v);
     match v {
-        Term::Var(name) => Ok(ctx.lookup_term(name).ok_or(ErrorCause::Hole)?.tpe),
-        Term::Undef(t) => eval(ctx.clone(), t),
-        Term::Fst(t) => {
+        Term::Var(name, _) => Ok(ctx.lookup_term(name).ok_or(ErrorCause::Hole)?.tpe),
+        Term::Undef(t, _) => eval(ctx.clone(), t),
+        Term::Fst(t, _) => {
             let res = infer_type(ctx.clone(), t)?;
             match res.as_ref() {
-                Term::Sigma(lam) => {
-                    let Term::Lam(_, tpe, _) = lam.as_ref() else {
+                Term::Sigma(lam, _) => {
+                    let Term::Lam(_, tpe, _, _) = lam.as_ref() else {
                         Err(ErrorCause::Hole)?
                     };
                     Ok(tpe.clone())
@@ -2030,35 +2123,35 @@ fn infer_type(ctx: TypeContext, v: &Term) -> Result<Rc<Term>, TypeError> {
                 _ => Err(ErrorCause::Hole)?,
             }
         }
-        Term::Snd(t) => {
+        Term::Snd(t, _) => {
             let res = infer_type(ctx.clone(), t)?;
             match res.as_ref() {
-                Term::Sigma(lam) => Ok(app(
+                Term::Sigma(lam, _) => Ok(app(
                     ctx.clone(),
                     lam.clone(),
-                    Rc::new(Term::Fst(t.clone())),
+                    Rc::new(Term::Fst(t.clone(), Mod::Precise)),
                 )?),
                 _ => Err(ErrorCause::Hole)?,
             }
         }
-        Term::App(t0, t1) => {
+        Term::App(t0, t1, _) => {
             let res = infer_type(ctx.clone(), t0)?;
             match res.as_ref() {
-                Term::Pi(lam) => Ok(app(ctx.clone(), lam.clone(), t1.clone())?),
+                Term::Pi(lam, _) => Ok(app(ctx.clone(), lam.clone(), t1.clone())?),
                 _ => Err(ErrorCause::Hole)?,
             }
         }
-        Term::Split(_, t, _) => Ok(t.clone()),
-        Term::AppFormula(t, phi) => {
+        Term::Split(_, t, _, _) => Ok(t.clone()),
+        Term::AppFormula(t, phi, _) => {
             let res = infer_type(ctx.clone(), t)?;
             match res.as_ref() {
-                Term::PathP(a, _, _) => app_formula(ctx, a.clone(), phi.clone()),
+                Term::PathP(a, _, _, _) => app_formula(ctx, a.clone(), phi.clone()),
                 _ => Err(ErrorCause::Hole)?,
             }
         }
-        Term::Comp(a, _, _) => app_formula(ctx.clone(), a.clone(), Formula::Dir(Dir::One)),
-        Term::UnGlueElemU(_, b, _) => Ok(b.clone()),
-        Term::IdJ(_, _, c, _, x, p) => app(
+        Term::Comp(a, _, _, _) => app_formula(ctx.clone(), a.clone(), Formula::Dir(Dir::One)),
+        Term::UnGlueElemU(_, b, _, _) => Ok(b.clone()),
+        Term::IdJ(_, _, c, _, x, p, _) => app(
             ctx.clone(),
             app(ctx.clone(), c.clone(), x.clone())?,
             p.clone(),
