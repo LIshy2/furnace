@@ -59,13 +59,11 @@ impl PathIndex {
             begin: end.clone(),
             end: new_target.clone(),
         });
-        // println!("{:?}", self.paths);
     }
 
     pub fn find_optimal_form(&self, t: &Term) -> Option<Rc<Term>> {
         for p in &self.paths {
             if p.begin.as_ref() == t {
-                // println!("COMP {:?}", t);
                 return Some(p.end.clone());
             }
         }
@@ -75,8 +73,6 @@ impl PathIndex {
     pub fn compact(&self, t: &Rc<Term>) -> Rc<Term> {
         match t.as_ref() {
             Term::Con(n, cs, m) => {
-                // println!("COMPACT {:?} --> {:?}", t, self.find_optimal_form(t));
-
                 let ccs = cs.iter().map(|f| self.compact(f)).collect();
                 let ut = Term::Con(n.clone(), ccs, m.clone());
                 if let Some(res) = self.find_optimal_form(&ut) {

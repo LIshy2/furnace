@@ -18,7 +18,6 @@ pub fn const_path(body: Rc<Term>) -> Rc<Term> {
 pub fn label_type(name: &Identifier, tpe: Rc<Term>) -> Result<Rc<Term>, TypeError> {
     let binding = tpe.clone();
     let (Term::Sum(_, labels, _) | Term::HSum(_, labels, _)) = binding.as_ref() else {
-        println!("{:?}", tpe);
         Err(ErrorCause::Hole)?
     };
     let label = labels
@@ -36,7 +35,6 @@ pub fn label_type(name: &Identifier, tpe: Rc<Term>) -> Result<Rc<Term>, TypeErro
 }
 
 pub fn infer(ctx: TypeContext, term: &Term) -> Result<Rc<Term>, TypeError> {
-    // println!("infer!! {:?}", term);
     match term {
         Term::U => Ok(Rc::new(Term::U)),
         Term::Var(name, _) => Ok(ctx

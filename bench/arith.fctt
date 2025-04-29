@@ -11,7 +11,7 @@ module arith where
 
   data nat =
     zero
-    | suc (p : nat);п
+    | suc (p : nat);
 
   Path (A : U) (a0 a1 : A) : U = PathP (< i > A) a0 a1;
 
@@ -29,7 +29,7 @@ module arith where
             (mapOnPath Z4 Z4 (\(x : Z4) -> (S (S (S (S x))))) Z (S (S (S (S Z)))) (<j> zeq{Z4} @ j)) @ i
   };
 
-  iters : Z4 = (doubleZ4 (doubleZ4 (doubleZ4 (doubleZ4 (doubleZ4 (S Z))))));
+  iters : Z4 = doubleZ4 (doubleZ4 (doubleZ4 (doubleZ4 (doubleZ4 (doubleZ4 (S Z))))));
 
   plusNatZ4 : nat -> nat = split
     {

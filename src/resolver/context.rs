@@ -1,4 +1,3 @@
-use std::backtrace::Backtrace;
 use crate::ctt::term;
 use crate::parser::ast::AIdent;
 use crate::resolver::error::ResolveError;

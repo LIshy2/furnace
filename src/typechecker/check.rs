@@ -2,7 +2,7 @@ use crate::ctt::term::{
     anon_id, Branch, DeclarationSet, Dir, Face, Formula, Identifier, Label, System, Telescope,
 };
 use crate::precise::term::{Mod, Term};
-use crate::typechecker::context::TypeContext;
+use crate::typechecker::context::{ProgressNotifier, TypeContext};
 use crate::typechecker::equiv::Equiv;
 use crate::typechecker::error::{ErrorCause, TypeError};
 use crate::typechecker::eval::{
@@ -146,17 +146,13 @@ pub fn check_declaration_set(
             let mut new_ctx = ctx.clone();
 
             for decl in decls.iter() {
+                ctx.decl_check_started(&decl.name);
                 let tpe = eval(new_ctx.clone(), decl.tpe.as_ref())?;
                 let pre_ctx = new_ctx.with_term(&decl.name, &decl.body, &tpe);
                 check(pre_ctx.clone(), decl.body.clone(), tpe.clone())?;
-                if decl.name == Identifier(42) {
-                    println!("FUCK");
-                }
                 let b = eval(pre_ctx.clone(), decl.body.as_ref())?;
-                if decl.name == Identifier(42) {
-                    println!("{:?}", b);
-                }
                 new_ctx = new_ctx.with_term(&decl.name, &b, &tpe);
+                ctx.decl_check_finished(&decl.name);
             }
             Ok(new_ctx)
         }

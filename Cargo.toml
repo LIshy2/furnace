@@ -3,8 +3,16 @@ name = "furnace"
 version = "0.1.0"
 edition = "2021"
 
-[build-dependencies] # <-- We added this and everything after!
+[build-dependencies]
 lalrpop = "0.22.1"
+
+[dev-dependencies]
+criterion = { version = "0.5.1", features = ["html_reports"] }
+
+[[bench]]
+name = "arith"
+harness = false
+
 
 [dependencies]
 lalrpop-util = { version = "0.22.1", features = ["lexer", "unicode"] }
@@ -12,3 +20,5 @@ rpds = "1.1.0"
 chrono = "0.4.40"
 backtrace-on-stack-overflow = "0.3.0"
 clap = { version = "4.5.37", features = ["derive"] }
+spinners = "4.1.1"
+

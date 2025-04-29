@@ -23,6 +23,7 @@ pub struct TypeContext {
     counter: Rc<RefCell<usize>>,
     path_index: Rc<RefCell<PathIndex>>,
     is_compact: bool,
+    notifier: Rc<dyn ProgressNotifier>,
 }
 
 impl Debug for TypeContext {
@@ -47,7 +48,7 @@ impl Debug for TypeContext {
 }
 
 impl TypeContext {
-    pub fn new() -> TypeContext {
+    pub fn new(notifier: Rc<dyn ProgressNotifier>) -> TypeContext {
         TypeContext {
             term_binds: HashTrieMap::new(),
             formula_binds: HashTrieMap::new(),
@@ -55,6 +56,7 @@ impl TypeContext {
             counter: Rc::new(RefCell::new(99999)),
             path_index: Rc::new(RefCell::new(PathIndex::new())),
             is_compact: true,
+            notifier,
         }
     }
 
@@ -116,6 +118,7 @@ impl TypeContext {
             counter: self.counter.clone(),
             path_index: self.path_index.clone(),
             is_compact: self.is_compact,
+            notifier: self.notifier.clone(),
         }
     }
 
@@ -135,6 +138,7 @@ impl TypeContext {
             counter: self.counter.clone(),
             path_index: self.path_index.clone(),
             is_compact: false,
+            notifier: self.notifier.clone(),
         }
     }
 
@@ -146,6 +150,7 @@ impl TypeContext {
             face: self.face.clone(),
             path_index: self.path_index.clone(),
             is_compact: self.is_compact,
+            notifier: self.notifier.clone(),
         }
     }
 
@@ -171,10 +176,24 @@ impl TypeContext {
             t.clone()
         } else {
             let res = self.path_index.borrow_mut().compact(t);
-            if t != &res {
-                // println!("COMPACTED {:?} --> {:?}", t, res)
-            }
             res
         }
+    }
+}
+
+pub trait ProgressNotifier {
+    fn decl_check_started(&self, decl_name: &Identifier);
+
+    fn decl_check_finished(&self, decl_name: &Identifier);
+}
+
+
+impl ProgressNotifier for TypeContext {
+    fn decl_check_started(&self, decl_name: &Identifier) {
+        self.notifier.decl_check_started(decl_name);
+    }
+
+    fn decl_check_finished(&self, decl_name: &Identifier) {
+        self.notifier.decl_check_finished(decl_name);
     }
 }

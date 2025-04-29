@@ -199,8 +199,6 @@ fn analyze(ctx: &mut Constraints, t: &Rc<CttTerm>) -> Rc<PreTerm> {
                 ctx.unify(&o.clone(), &t.clone())
             }
 
-            println!("SPLITED {:?} {:?}", n, ctx.apply(&o));
-
             Rc::new(PreTerm::Split(
                 n.clone(),
                 analyze(ctx, t),
@@ -229,7 +227,6 @@ fn analyze(ctx: &mut Constraints, t: &Rc<CttTerm>) -> Rc<PreTerm> {
                         for (_, t) in &s.binds {
                             ctx.unify(&t.tpe(), &SimpleType::Strict);
                         }
-                        println!("ANALYZED SYS {:?}", s);
                         Label::PLabel(n.clone(), analyze_tele(ctx, t), is.clone(), s)
                     }
                 })
@@ -322,29 +319,8 @@ pub fn analyze_all(
                     .map(|d| {
                         let f = ctx.fresh();
                         ctx.add(&d.name, f.clone());
-                        if d.name == Identifier(54) {
-                            println!("START");
-                        }
                         let t = analyze(ctx, &d.body);
                         ctx.unify(&t.tpe(), &f);
-                        if d.name == Identifier(36) {
-                            println!("DECL36 {:?}", ctx.apply(&t.tpe()));
-                        }
-                        if d.name == Identifier(42) {
-                            println!("DECL42 {:?}", ctx.apply(&t.tpe()));
-                        }
-                        if d.name == Identifier(43) {
-                            println!("DECL43 {:?}", ctx.apply(&t.tpe()));
-                        }
-                        if d.name == Identifier(51) {
-                            println!("DECL51 {:?}", ctx.apply(&t.tpe()));
-                        }
-                        if d.name == Identifier(54) {
-                            println!("DECL54 {:?}", ctx.apply(&t.tpe()));
-                        }
-                        if d.name == Identifier(56) {
-                            println!("DECL56 {:?}", ctx.apply(&t.tpe()));
-                        }
                         Declaration {
                             name: d.name.clone(),
                             tpe: analyze(ctx, &d.tpe),

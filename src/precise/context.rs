@@ -68,25 +68,10 @@ impl Constraints {
             (SimpleType::Strict, SimpleType::Fun(_, _)) => (),
             (SimpleType::Fun(_, _), SimpleType::Strict) => (),
             (SimpleType::Var(name), _) => {
-                if name == &89 {
-                    println!("ABOBA {:?}", t2)
-                }
-                if name == &92 {
-                    println!("ABOBA {:?}", t2)
-                }
-                if name == &136 {
-                    println!("ABOBA {:?}", t2)
-                }
                 self.subs.insert(name.clone(), t2.clone());
             }
 
             (_, SimpleType::Var(name)) => {
-                if name == &89 {
-                    println!("ABOBA {:?}", t1)
-                }
-                if name == &92 {
-                    println!("ABOBA {:?}", t2)
-                }
                 self.subs.insert(name.clone(), t1.clone());
             }
             (SimpleType::Fun(in1, out1), SimpleType::Fun(in2, out2)) => {
