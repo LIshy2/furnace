@@ -4,7 +4,11 @@ use std::hash::Hash;
 pub fn intersect<'l, 'r, A, B, C>(
     left: &'l HashMap<A, B>,
     right: &'r HashMap<A, C>,
-) -> HashMap<&'l A, (&'l B, &'r C)> where A: Hash, A: Eq {
+) -> HashMap<&'l A, (&'l B, &'r C)>
+where
+    A: Hash,
+    A: Eq,
+{
     let mut result = HashMap::new();
     for (k, v1) in left {
         if let Some(v2) = right.get(k) {

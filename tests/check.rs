@@ -26,7 +26,6 @@ mod tests {
 
     #[test]
     fn check_examples() {
-
         unsafe { backtrace_on_stack_overflow::enable() };
 
         let reader = ExampleModules;

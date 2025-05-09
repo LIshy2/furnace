@@ -1,13 +1,14 @@
 use crate::ctt::term::{DeclarationSet, Face, Formula, Identifier, Label};
 use crate::precise::term::Term;
+use crate::typechecker::canon::eval::{eval, eval_system};
+use crate::typechecker::canon::heat::PathIndex;
 use crate::typechecker::error::TypeError;
-use crate::typechecker::eval::{eval, eval_system, Facing};
-use crate::typechecker::heat::PathIndex;
 use rpds::HashTrieMap;
 use std::cell::RefCell;
 use std::fmt::{Debug, Formatter};
-use std::ops::Deref;
 use std::rc::Rc;
+
+use super::canon::nominal::Facing;
 
 #[derive(Clone, Debug)]
 pub struct Entry {
@@ -69,15 +70,15 @@ impl TypeContext {
     pub fn lookup_term(&self, name: &Identifier) -> Option<Entry> {
         let e = self.term_binds.get(name).map(|x| x.clone())?;
         let new_entry = Entry {
-            tpe: e.tpe.face(self.clone(), &self.face).unwrap(),
-            value: e.value.face(self.clone(), &self.face).unwrap(),
+            tpe: e.tpe.face(self, &self.face).unwrap(),
+            value: e.value.face(self, &self.face).unwrap(),
         };
         Some(new_entry)
     }
 
     pub fn lookup_formula(&self, name: &Identifier) -> Option<Formula> {
         let f = self.formula_binds.get(name).map(|x| x.clone())?;
-        Some(f.face(self.clone(), &self.face).unwrap())
+        Some(f.face(self, &self.face).unwrap())
     }
 
     fn analyze_hsum(&self, hsum: &Rc<Term>) {
@@ -87,8 +88,8 @@ impl TypeContext {
                     match label {
                         Label::PLabel(_, _, is, sys) => {
                             if is.len() == 1 {
-                                if sys.binds.len() == 2 {
-                                    let endpoints = sys.binds.values().collect::<Vec<_>>();
+                                if sys.len() == 2 {
+                                    let endpoints = sys.values().collect::<Vec<_>>();
                                     self.path_index
                                         .borrow_mut()
                                         .add(&endpoints[0], &endpoints[1]);
@@ -161,8 +162,8 @@ impl TypeContext {
                 for decl in decls {
                     new_ctx = new_ctx.with_term(
                         &decl.name,
-                        &eval(new_ctx.clone(), decl.body.as_ref())?,
-                        &eval(new_ctx.clone(), decl.tpe.as_ref())?,
+                        &eval(&new_ctx, &decl.body)?,
+                        &eval(&new_ctx, &decl.tpe)?,
                     );
                 }
             }
@@ -186,7 +187,6 @@ pub trait ProgressNotifier {
 
     fn decl_check_finished(&self, decl_name: &Identifier);
 }
-
 
 impl ProgressNotifier for TypeContext {
     fn decl_check_started(&self, decl_name: &Identifier) {

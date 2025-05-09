@@ -28,9 +28,11 @@ mod tests {
             let path = entry.path();
 
             if path.is_file() && path.extension().map(|s| s == "fctt").unwrap_or(false) {
-                let deps =
-                    resolver::module::build_module_dependencies(&reader, path.file_stem().unwrap().to_str().unwrap())
-                        .unwrap();
+                let deps = resolver::module::build_module_dependencies(
+                    &reader,
+                    path.file_stem().unwrap().to_str().unwrap(),
+                )
+                .unwrap();
 
                 resolve_modules(deps).unwrap();
             }

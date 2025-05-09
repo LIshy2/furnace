@@ -15,17 +15,11 @@ mod tests {
     #[test]
     fn module() {
         grammar::ModuleParser::new()
-            .parse(
-                "module idtypes where { import sigma; import univalence a: U = a }",
-            )
+            .parse("module idtypes where { import sigma; import univalence a: U = a }")
             .unwrap();
     }
     #[test]
     fn system() {
-        grammar::SystemParser::new()
-            .parse(
-                "[-> a]"
-            ).unwrap();
+        grammar::SystemParser::new().parse("[-> a]").unwrap();
     }
-    
 }

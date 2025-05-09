@@ -1,7 +1,7 @@
+use crate::ctt::term::Identifier;
 use std::backtrace::Backtrace;
 use std::error::Error;
 use std::fmt::{Debug, Display, Formatter};
-use crate::ctt::term::Identifier;
 
 #[derive(Clone, Debug)]
 pub enum ErrorCause {

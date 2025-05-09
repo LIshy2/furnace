@@ -7,7 +7,7 @@ pub struct Module {
 }
 
 pub struct Import {
-    pub name: String
+    pub name: String,
 }
 pub struct Tele {
     pub ids: Vec<AIdent>,

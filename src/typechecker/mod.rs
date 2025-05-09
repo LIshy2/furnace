@@ -1,8 +1,6 @@
-mod infer;
-pub mod context;
-mod error;
+mod canon;
 pub mod check;
-mod eval;
-mod nominal;
+pub mod context;
 mod equiv;
-mod heat;
+mod error;
+pub mod infer;

@@ -9,7 +9,7 @@ use std::rc::Rc;
 #[derive(Clone)]
 struct Generator {
     num: usize,
-    dict: Vec<AIdent>
+    dict: Vec<AIdent>,
 }
 
 impl Generator {
@@ -109,11 +109,11 @@ impl ResolveContext {
         }
     }
 
-    pub fn resolve_var(&self, ident: &str) -> Result<term::Term, ResolveError> {
+    pub fn resolve_var(&self, ident: &str) -> Result<term::Term<()>, ResolveError> {
         if let Some((kind, id)) = self.binds.get(ident) {
             match kind {
-                SymbolKind::Variable => Ok(term::Term::Var(id.clone())),
-                SymbolKind::Constructor => Ok(term::Term::Con(id.clone(), vec![])),
+                SymbolKind::Variable => Ok(term::Term::Var(id.clone(), ())),
+                SymbolKind::Constructor => Ok(term::Term::Con(id.clone(), vec![], ())),
                 SymbolKind::PConstructor | SymbolKind::Name => {
                     Err(UnresolvedVar(ident.to_string()))
                 }
@@ -128,9 +128,7 @@ impl ResolveContext {
             match kind {
                 SymbolKind::Variable => Ok(id.clone()),
                 SymbolKind::Constructor | SymbolKind::PConstructor => Ok(id.clone()),
-                SymbolKind::Name => {
-                    Err(UnresolvedVar(ident.to_string()))
-                }
+                SymbolKind::Name => Err(UnresolvedVar(ident.to_string())),
             }
         } else {
             Err(UnresolvedVar(ident.to_string()))

@@ -1,9 +1,9 @@
 use furnace::parser;
- mod tests {
+mod tests {
+    use furnace::parser;
     use std::fs;
     use std::io::Read;
-    use furnace::parser;
-    
+
     #[test]
     fn parse_examples() {
         let module_parser = parser::grammar::ModuleParser::new();
@@ -19,7 +19,9 @@ use furnace::parser;
                 file.read_to_string(&mut content).unwrap();
                 let file_name = path.file_name().unwrap().to_str().unwrap();
                 print!("Parsing... {}\n", file_name);
-                module_parser.parse(&content).expect(&format!("UNPARSED {}", path.display()));
+                module_parser
+                    .parse(&content)
+                    .expect(&format!("UNPARSED {}", path.display()));
             }
         }
     }

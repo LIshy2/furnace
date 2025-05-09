@@ -5,45 +5,44 @@ use crate::typechecker::check::{
 };
 use crate::typechecker::context::TypeContext;
 use crate::typechecker::error::{ErrorCause, TypeError};
-use crate::typechecker::eval::{
-    app_formula, comp_line, eval, eval_formula, eval_system, get_first,
-};
 use std::collections::HashMap;
 use std::rc::Rc;
 
-pub fn const_path(body: Rc<Term>) -> Rc<Term> {
-    Rc::new(Term::PLam(anon_id(), body, Mod::Precise))
+use super::canon::app::{app, app_formula};
+use super::canon::comp::comp_line;
+use super::canon::eval::{eval, eval_formula, eval_system, get_first};
+
+pub fn const_path(body: &Rc<Term>) -> Rc<Term> {
+    Term::plam(anon_id(), body, Mod::Precise)
 }
 
-pub fn label_type(name: &Identifier, tpe: Rc<Term>) -> Result<Rc<Term>, TypeError> {
-    let binding = tpe.clone();
-    let (Term::Sum(_, labels, _) | Term::HSum(_, labels, _)) = binding.as_ref() else {
+pub fn label_type(name: &Identifier, tpe: &Rc<Term>) -> Result<Rc<Term>, TypeError> {
+    let (Term::Sum(_, labels, _) | Term::HSum(_, labels, _)) = tpe.as_ref() else {
         Err(ErrorCause::Hole)?
     };
     let label = labels
         .iter()
         .find(|p| &p.name() == name)
         .ok_or(ErrorCause::Hole)?;
-    let mut res = tpe;
+    let mut res = tpe.clone();
     for (var, tpe) in label.telescope().variables.iter().rev() {
-        res = Rc::new(Term::Pi(
-            Rc::new(Term::Lam(var.clone(), tpe.clone(), res, Mod::Precise)),
+        res = Term::pi(
+            &Term::lam(var.clone(), tpe, &res, Mod::Precise),
             Mod::Precise,
-        ))
+        )
     }
     Ok(res)
 }
 
-pub fn infer(ctx: TypeContext, term: &Term) -> Result<Rc<Term>, TypeError> {
-    match term {
+pub fn infer(ctx: &TypeContext, term: &Rc<Term>) -> Result<Rc<Term>, TypeError> {
+    match term.as_ref() {
         Term::U => Ok(Rc::new(Term::U)),
         Term::Var(name, _) => Ok(ctx
             .lookup_term(name)
             .ok_or(ErrorCause::UnknownTermName(name.clone()))?
             .tpe),
         Term::App(f, a, _) => {
-            let fun_tpe = infer(ctx.clone(), f)?;
-            // println!("fun_tpe {:?}", fun_tpe);
+            let fun_tpe = infer(ctx, f)?;
             let Term::Pi(lam, _) = fun_tpe.as_ref() else {
                 Err(ErrorCause::Hole)?
             };
@@ -51,81 +50,77 @@ pub fn infer(ctx: TypeContext, term: &Term) -> Result<Rc<Term>, TypeError> {
                 Err(ErrorCause::Hole)?
             };
 
-            check(ctx.clone(), a.clone(), tpe.clone())?;
-            eval(ctx, &Term::App(lam.clone(), a.clone(), Mod::Precise))
+            check(ctx, a, tpe)?;
+            eval(ctx, &Term::app(lam, a, Mod::Precise))
         }
         Term::Fst(pair, _) => {
-            let pair_tpe = infer(ctx, pair.as_ref())?;
+            let pair_tpe = infer(ctx, pair)?;
             let Term::Sigma(pair_tpe, _) = pair_tpe.as_ref() else {
                 Err(ErrorCause::Hole)?
             };
             let Term::Lam(_, param, _, _) = pair_tpe.as_ref() else {
                 Err(ErrorCause::Hole)?
             };
-            Ok(Rc::new(param.as_ref().clone()))
+            Ok(param.clone())
         }
         Term::Snd(pair, _) => {
-            let pair_tpe = infer(ctx.clone(), pair.as_ref())?;
+            let pair_tpe = infer(ctx, pair)?;
             let Term::Sigma(lam, _) = pair_tpe.as_ref() else {
                 Err(ErrorCause::Hole)?
             };
-            let p = eval(ctx.clone(), pair)?;
-            eval(ctx, &Term::App(lam.clone(), get_first(p), Mod::Precise))
+            let p = eval(ctx, pair)?;
+            app(ctx, lam, &get_first(&p))
         }
         Term::Where(t, d, _) => {
-            let new_ctx = check_declaration_set(ctx.clone(), d)?;
-            infer(new_ctx, t)
+            let new_ctx = check_declaration_set(ctx, d)?;
+            infer(&new_ctx, t)
         }
         Term::UnGlueElem(e, _, _) => {
-            let glue_type = infer(ctx.clone(), e)?;
+            let glue_type = infer(ctx, e)?;
             let Term::Glue(t, _, _) = glue_type.as_ref() else {
                 Err(ErrorCause::Hole)?
             };
             Ok(t.clone())
         }
         Term::AppFormula(e, phi, _) => {
-            check_formula(ctx.clone(), phi)?;
-            let path_p = infer(ctx.clone(), e)?;
+            check_formula(ctx, phi)?;
+            let path_p = infer(ctx, e)?;
             let Term::PathP(a, _, _, _) = path_p.as_ref() else {
                 Err(ErrorCause::Hole)?
             };
-            app_formula(
-                ctx.clone(),
-                eval(ctx.clone(), a.as_ref())?,
-                eval_formula(ctx.clone(), phi),
-            )
+            app_formula(ctx, &eval(ctx, a)?, eval_formula(ctx, phi))
         }
-        Term::Split(_, tpe, _, _) => Ok(eval(ctx.clone(), tpe)?),
+        Term::Split(_, tpe, _, _) => Ok(eval(ctx, tpe)?),
         Term::Comp(a, t0, ps, _) => {
-            let (va0, va1) = check_plam(ctx.clone(), a.clone(), const_path(Rc::new(Term::U)))?;
-            let va = eval(ctx.clone(), a)?;
-            check(ctx.clone(), t0.clone(), va0)?;
-            check_plam_system(ctx, t0.clone(), va, ps)?;
+            let (va0, va1) = check_plam(ctx, a, &const_path(&Term::u()))?;
+            let va = eval(ctx, a)?;
+            check(ctx, t0, &va0)?;
+            check_plam_system(ctx, t0, &va, ps)?;
             Ok(va1)
         }
         Term::HComp(a, u0, us, _) => {
-            check(ctx.clone(), a.clone(), Rc::new(Term::U))?;
-            let va = eval(ctx.clone(), a)?;
-            check(ctx.clone(), u0.clone(), va.clone())?;
-            check_plam_system(ctx, u0.clone(), const_path(Rc::new(Term::U)), us)?;
+            check(ctx, a, &Term::u())?;
+            let va = eval(ctx, a)?;
+            check(ctx, u0, &va)?;
+            check_plam_system(ctx, u0, &const_path(&Term::u()), us)?;
             Ok(va)
         }
         Term::Fill(a, t0, ps, _) => {
-            let (va0, _) = check_plam(ctx.clone(), a.clone(), const_path(Rc::new(Term::U)))?;
-            let va = eval(ctx.clone(), a)?;
-            check(ctx.clone(), t0.clone(), va0)?;
-            check_plam_system(ctx.clone(), t0.clone(), va.clone(), ps)?;
-            let vt = eval(ctx.clone(), t0)?;
-            let vps = eval_system(ctx.clone(), ps)?;
-            let line = comp_line(ctx, va.clone(), vt.clone(), vps)?;
-            Ok(Rc::new(Term::PathP(va, vt, line, Mod::Precise)))
+            let (va0, _) = check_plam(ctx, a, &const_path(&Term::u()))?;
+            let va = eval(ctx, a)?;
+            check(ctx, t0, &va0)?;
+            check_plam_system(ctx, t0, &va, ps)?;
+            let vt = eval(ctx, t0)?;
+            let vps = eval_system(ctx, ps)?;
+            let line = comp_line(ctx, &va, &vt, vps)?;
+            Ok(Term::pathp(&va, &vt, &line, Mod::Precise))
         }
         Term::PCon(c, a, es, phis, _) => {
-            let va = eval(ctx.clone(), a.as_ref())?;
+            let va = eval(ctx, a)?;
 
-            check(ctx.clone(), va.clone(), Rc::new(Term::U))?;
+            check(ctx, &va, &Term::u())?;
 
-            let con = label_type(c, va.clone())?;
+            let con = label_type(c, &va)?;
 
             let mut con_type = con;
             let mut arg_ctx = ctx.clone();
@@ -137,78 +132,68 @@ pub fn infer(ctx: TypeContext, term: &Term) -> Result<Rc<Term>, TypeError> {
                 let Term::Lam(name, tpe, body, _) = arg_lam.as_ref() else {
                     Err(ErrorCause::Hole)?
                 };
-                let tpe = eval(arg_ctx.clone(), tpe)?;
+                let tpe = eval(&arg_ctx, tpe)?;
                 arg_ctx = arg_ctx.with_term(&name, arg, &tpe);
                 con_type = body.clone();
-                check(arg_ctx.clone(), arg.clone(), tpe)?;
+                check(&arg_ctx, arg, &tpe)?;
             }
 
             for formula in phis {
-                check_formula(ctx.clone(), formula)?
+                check_formula(ctx, formula)?
             }
             Ok(va)
         }
         Term::IdJ(a, u, c, d, x, p, _) => {
-            check(ctx.clone(), a.clone(), Rc::new(Term::U))?;
-            let va = eval(ctx.clone(), a)?;
-            check(ctx.clone(), u.clone(), va.clone())?;
-            let vu = eval(ctx.clone(), u)?;
-            let refu = Rc::new(Term::IdPair(
-                const_path(Rc::new(Term::U)),
-                System {
-                    binds: HashMap::from([(Face::eps(), vu.clone())]),
-                },
+            check(ctx, a, &Term::u())?;
+            let va = eval(ctx, a)?;
+            check(ctx, u, &va)?;
+            let vu = eval(ctx, u)?;
+            let refu = Term::id_pair(
+                &const_path(&Term::u()),
+                System::from(HashMap::from([(Face::eps(), vu.clone())])),
                 Mod::Precise,
-            ));
+            );
             let z_lit = ctx.fresh();
 
-            let z = Term::Var(z_lit, Mod::Precise);
+            let z = Term::var(z_lit, Mod::Precise);
             let ctype = eval(
-                ctx.clone(),
-                &Term::Pi(
-                    Rc::new(Term::Lam(
+                ctx,
+                &Term::pi(
+                    &Term::lam(
                         z_lit,
-                        a.clone(),
-                        Rc::new(Term::Pi(
-                            Rc::new(Term::Lam(
+                        a,
+                        &Term::pi(
+                            &Term::lam(
                                 anon_id(),
-                                Rc::new(Term::Id(a.clone(), u.clone(), Rc::new(z), Mod::Precise)),
-                                Rc::new(Term::U),
+                                &Term::id(a, u, &z, Mod::Precise),
+                                &Term::u(),
                                 Mod::Precise,
-                            )),
+                            ),
                             Mod::Precise,
-                        )),
+                        ),
                         Mod::Precise,
-                    )),
+                    ),
                     Mod::Precise,
                 ),
             )?;
-            check(ctx.clone(), c.clone(), ctype)?;
-            let vc = eval(ctx.clone(), c)?;
+            check(ctx, c, &ctype)?;
+            let vc = eval(ctx, c)?;
 
             check(
-                ctx.clone(),
-                d.clone(),
-                eval(
-                    ctx.clone(),
-                    &Term::App(
-                        Rc::new(Term::App(vc.clone(), vu.clone(), Mod::Precise)),
-                        refu,
-                        Mod::Precise,
-                    ),
+                ctx,
+                d,
+                &eval(
+                    ctx,
+                    &Term::app(&Term::app(&vc, &vu, Mod::Precise), &refu, Mod::Precise),
                 )?,
             )?;
-            check(ctx.clone(), x.clone(), va.clone())?;
-            let vx = eval(ctx.clone(), x)?;
-            check(
-                ctx.clone(),
-                p.clone(),
-                Rc::new(Term::Id(va, vu, vx.clone(), Mod::Precise)),
-            )?;
-            let vp = eval(ctx.clone(), p)?;
+            check(ctx, x, &va)?;
+            let vx = eval(ctx, x)?;
+            check(ctx, p, &Term::id(&va, &vu, &vx, Mod::Precise))?;
+            let vp = eval(ctx, p)?;
             eval(
-                ctx.clone(),
-                &Term::App(Rc::new(Term::App(vc, vx, Mod::Precise)), vp, Mod::Precise),
+                ctx,
+                &Term::app(&Term::app(&vc, &vx, Mod::Precise), &vp, Mod::Precise),
             )
         }
         _ => panic!("uninferable state {:?}", term),

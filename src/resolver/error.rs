@@ -4,5 +4,5 @@ pub enum ResolveError {
     UnresolvedVar(String),
     UnresolvedName(String),
     UnsupportedDeclaration,
-    RecursiveImports(String, String)
+    RecursiveImports(String, String),
 }

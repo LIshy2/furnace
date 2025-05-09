@@ -1,5 +1,5 @@
-use std::backtrace::Backtrace;
 use crate::ctt::term::Identifier;
+use std::backtrace::Backtrace;
 use std::collections::HashMap;
 
 pub struct Constraints {

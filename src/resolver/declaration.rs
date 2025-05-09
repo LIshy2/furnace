@@ -15,7 +15,7 @@ fn resolve_data(
     tele: Vec<ast::Tele>,
     labels: Vec<ast::Label>,
     force_h: bool,
-) -> Result<DeclarationSet<term::Term>, ResolveError> {
+) -> Result<DeclarationSet<term::Term<()>>, ResolveError> {
     let telescope = Telescope::from_tele(ctx.clone(), tele)?;
     let ctx = telescope.context();
 
@@ -24,16 +24,16 @@ fn resolve_data(
     let labels = labels
         .into_iter()
         .map(|l| resolve_label(ctx.clone(), l))
-        .collect::<Result<Vec<term::Label<term::Term>>, ResolveError>>()?;
+        .collect::<Result<Vec<term::Label<term::Term<()>>>, ResolveError>>()?;
     let is_h = force_h
         || labels.iter().any(|l| match l {
             term::Label::OLabel(_, _) => false,
             term::Label::PLabel(_, _, _, _) => true,
         });
     let body = if is_h {
-        term::Term::HSum(name, labels)
+        term::Term::HSum(name, labels, ())
     } else {
-        term::Term::Sum(name, labels)
+        term::Term::Sum(name, labels, ())
     };
 
     let body = telescope.clone().lambda(|_| Ok(Rc::new(body)))?;
@@ -58,7 +58,7 @@ fn data_context(ctx: ResolveContext, name: String, labels: &[ast::Label]) -> Res
 fn resolve_declaration(
     ctx: ResolveContext,
     decl: ast::Decl,
-) -> Result<(DeclarationSet<term::Term>, ResolveContext), ResolveError> {
+) -> Result<(DeclarationSet<term::Term<()>>, ResolveContext), ResolveError> {
     match decl {
         ast::Decl::Mutual(decls) => {
             let ctx = decls.iter().fold(ctx, |ctx, d| match d {
@@ -128,8 +128,8 @@ fn resolve_declaration(
                 let branches = branches
                     .into_iter()
                     .map(|b| resolve_branch(ctx.clone(), b))
-                    .collect::<Result<Vec<term::Branch<term::Term>>, ResolveError>>()?;
-                Ok(Rc::new(term::Term::Split(name, splitted_tpe, branches)))
+                    .collect::<Result<Vec<term::Branch<term::Term<()>>>, ResolveError>>()?;
+                Ok(Rc::new(term::Term::Split(name, splitted_tpe, branches, ())))
             })?;
             Ok((
                 DeclarationSet::Mutual(vec![term::Declaration { name, tpe, body }]),
@@ -144,7 +144,7 @@ fn resolve_declaration(
             let declaration_set = DeclarationSet::Mutual(vec![term::Declaration {
                 name,
                 tpe: tpe.clone(),
-                body: Rc::new(term::Term::Undef(tpe)),
+                body: Rc::new(term::Term::Undef(tpe, ())),
             }]);
             Ok((declaration_set, def_ctx))
         }
@@ -154,7 +154,7 @@ fn resolve_declaration(
 pub fn resolve_declarations(
     mut ctx: ResolveContext,
     decls: Vec<ast::Decl>,
-) -> Result<(Vec<DeclarationSet<term::Term>>, ResolveContext), ResolveError> {
+) -> Result<(Vec<DeclarationSet<term::Term<()>>>, ResolveContext), ResolveError> {
     let declaration_sets = decls
         .into_iter()
         .map(|decl| {
@@ -162,6 +162,6 @@ pub fn resolve_declarations(
             ctx = new_ctx;
             Ok(decl)
         })
-        .collect::<Result<Vec<DeclarationSet<term::Term>>, ResolveError>>()?;
+        .collect::<Result<Vec<DeclarationSet<term::Term<()>>>, ResolveError>>()?;
     Ok((declaration_sets, ctx))
 }

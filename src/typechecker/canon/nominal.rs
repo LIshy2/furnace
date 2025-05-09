@@ -1,19 +1,18 @@
 use crate::ctt::term::{Branch, Face, Formula, Identifier, System};
 use crate::precise::term::{Mod, Term};
+use crate::typechecker::canon::app::{app, app_formula};
+use crate::typechecker::canon::comp::{comp_line, hcomp};
+use crate::typechecker::canon::eval::{get_first, get_second, inv_formula, pcon};
+use crate::typechecker::canon::glue::{glue, glue_elem, unglue_elem, unglue_u};
 use crate::typechecker::context::TypeContext;
 use crate::typechecker::error::TypeError;
-use crate::typechecker::eval::{
-    app, app_formula, comp_line, get_first, get_second, glue, glue_elem, hcomp, inv_formula, pcon,
-    unglue_elem, unglue_u, Facing,
-};
 use std::collections::HashMap;
 use std::rc::Rc;
-use std::sync::atomic::{AtomicUsize, Ordering};
 
 pub trait Nominal: Sized {
     fn support(&self) -> Vec<Identifier>;
 
-    fn act(&self, ctx: TypeContext, i: &Identifier, f: Formula) -> Result<Self, TypeError>;
+    fn act(&self, ctx: &TypeContext, i: &Identifier, f: Formula) -> Result<Self, TypeError>;
 
     fn swap(&self, from: &Identifier, to: &Identifier) -> Self;
 }
@@ -133,18 +132,9 @@ impl Nominal for Rc<Term> {
         result
     }
 
-    fn act(&self, ctx: TypeContext, i: &Identifier, f: Formula) -> Result<Self, TypeError> {
-        static COUNTER: AtomicUsize = AtomicUsize::new(0);
-
-        let x = COUNTER.fetch_add(1, Ordering::SeqCst);
-        // if x % 10000 == 0 {
-        //     println!("{x}: act {:?} {:?} {:?}", self, i, f);
-        //     if x == 8849712 {
-        //         println!("{}", Backtrace::capture());
-        //     }
-        // }
+    fn act(&self, ctx: &TypeContext, i: &Identifier, f: Formula) -> Result<Self, TypeError> {
         fn act_formula(
-            ctx: TypeContext,
+            ctx: &TypeContext,
             o: &Formula,
             i: &Identifier,
             f: Formula,
@@ -157,7 +147,7 @@ impl Nominal for Rc<Term> {
         }
 
         fn act_system(
-            ctx: TypeContext,
+            ctx: &TypeContext,
             o: &System<Term>,
             i: &Identifier,
             f: Formula,
@@ -171,7 +161,7 @@ impl Nominal for Rc<Term> {
 
         match self.as_ref() {
             Term::Pi(u, m) => {
-                let new_u = u.act(ctx.clone(), i, f)?;
+                let new_u = u.act(ctx, i, f)?;
                 if Rc::ptr_eq(u, &new_u) {
                     Ok(self.clone())
                 } else {
@@ -179,19 +169,19 @@ impl Nominal for Rc<Term> {
                 }
             }
             Term::App(a, b, _) => {
-                let new_a = a.act(ctx.clone(), i, f.clone())?;
-                let new_b = b.act(ctx.clone(), i, f)?;
+                let new_a = a.act(ctx, i, f.clone())?;
+                let new_b = b.act(ctx, i, f)?;
                 if Rc::ptr_eq(a, &new_a) && Rc::ptr_eq(b, &new_b) {
                     Ok(self.clone())
                 } else {
-                    app(ctx.clone(), new_a, new_b)
+                    app(ctx, &new_a, &new_b)
                 }
             }
             Term::Lam(x, t, u, m) => {
-                let new_t = t.act(ctx.clone(), i, f.clone())?;
+                let new_t = t.act(ctx, i, f.clone())?;
                 let in_body_ctx =
                     ctx.with_term(x, &Rc::new(Term::Var(x.clone(), Mod::Precise)), &new_t);
-                let new_u = u.act(in_body_ctx.clone(), i, f)?;
+                let new_u = u.act(&in_body_ctx, i, f)?;
 
                 if Rc::ptr_eq(t, &new_t) && Rc::ptr_eq(u, &new_u) {
                     Ok(self.clone())
@@ -200,7 +190,7 @@ impl Nominal for Rc<Term> {
                 }
             }
             Term::Sigma(t, m) => {
-                let new_t = t.act(ctx.clone(), i, f)?;
+                let new_t = t.act(ctx, i, f)?;
                 if Rc::ptr_eq(t, &new_t) {
                     Ok(self.clone())
                 } else {
@@ -208,8 +198,8 @@ impl Nominal for Rc<Term> {
                 }
             }
             Term::Pair(fst, snd, m) => {
-                let new_fst = fst.act(ctx.clone(), i, f.clone())?;
-                let new_snd = snd.act(ctx.clone(), i, f)?;
+                let new_fst = fst.act(ctx, i, f.clone())?;
+                let new_snd = snd.act(ctx, i, f)?;
                 if Rc::ptr_eq(fst, &new_fst) && Rc::ptr_eq(snd, &new_snd) {
                     Ok(self.clone())
                 } else {
@@ -217,19 +207,19 @@ impl Nominal for Rc<Term> {
                 }
             }
             Term::Fst(v, _) => {
-                let new_v = v.act(ctx.clone(), i, f)?;
+                let new_v = v.act(ctx, i, f)?;
                 if Rc::ptr_eq(v, &new_v) {
                     Ok(self.clone())
                 } else {
-                    Ok(get_first(new_v))
+                    Ok(get_first(&new_v))
                 }
             }
             Term::Snd(v, _) => {
-                let new_v = v.act(ctx.clone(), i, f)?;
+                let new_v = v.act(ctx, i, f)?;
                 if Rc::ptr_eq(v, &new_v) {
                     Ok(self.clone())
                 } else {
-                    Ok(get_second(new_v))
+                    Ok(get_second(&new_v))
                 }
             }
             Term::Con(c, a, m) => {
@@ -237,7 +227,7 @@ impl Nominal for Rc<Term> {
                 let new_a = a
                     .iter()
                     .map(|x| {
-                        let new_x = x.act(ctx.clone(), i, f.clone())?;
+                        let new_x = x.act(ctx, i, f.clone())?;
                         if !Rc::ptr_eq(x, &new_x) {
                             changed = true;
                         }
@@ -252,13 +242,13 @@ impl Nominal for Rc<Term> {
                 }
             }
             Term::PCon(c, t, vs, phis, m) => {
-                let new_t = t.act(ctx.clone(), i, f.clone())?;
+                let new_t = t.act(ctx, i, f.clone())?;
                 let mut changed = !Rc::ptr_eq(t, &new_t);
 
                 let new_vs = vs
                     .iter()
                     .map(|x| {
-                        let new_x = x.act(ctx.clone(), i, f.clone())?;
+                        let new_x = x.act(ctx, i, f.clone())?;
                         if !Rc::ptr_eq(x, &new_x) {
                             changed = true;
                         }
@@ -269,7 +259,7 @@ impl Nominal for Rc<Term> {
                     .iter()
                     .map(|x| {
                         if x.support().contains(i) {
-                            let new_x = x.act(ctx.clone(), i, f.clone())?;
+                            let new_x = x.act(ctx, i, f.clone())?;
                             changed = true;
                             Ok(new_x)
                         } else {
@@ -281,7 +271,7 @@ impl Nominal for Rc<Term> {
                 if !changed {
                     Ok(self.clone())
                 } else {
-                    pcon(ctx.clone(), c, new_t, new_vs, new_phis, m.clone())
+                    pcon(ctx, c, &new_t, new_vs, new_phis, m.clone())
                 }
             }
             Term::Split(c, t, b, m) => {
@@ -293,9 +283,9 @@ impl Nominal for Rc<Term> {
                 }
             }
             Term::PathP(a, u, v, m) => {
-                let new_a = a.act(ctx.clone(), i, f.clone())?;
-                let new_u = u.act(ctx.clone(), i, f.clone())?;
-                let new_v = v.act(ctx.clone(), i, f)?;
+                let new_a = a.act(ctx, i, f.clone())?;
+                let new_u = u.act(ctx, i, f.clone())?;
+                let new_v = v.act(ctx, i, f)?;
 
                 if Rc::ptr_eq(a, &new_a) && Rc::ptr_eq(u, &new_u) && Rc::ptr_eq(v, &new_v) {
                     Ok(self.clone())
@@ -311,7 +301,7 @@ impl Nominal for Rc<Term> {
                     if !sphi.contains(j) {
                     } else {
                     }
-                    let new_v = v.act(ctx.clone(), i, f)?;
+                    let new_v = v.act(ctx, i, f)?;
                     if Rc::ptr_eq(v, &new_v) {
                         Ok(self.clone())
                     } else {
@@ -320,89 +310,83 @@ impl Nominal for Rc<Term> {
                 }
             }
             Term::AppFormula(b, c, _) => {
-                let new_b = b.act(ctx.clone(), i, f.clone())?;
-                let new_c = act_formula(ctx.clone(), c, i, f.clone())?;
+                let new_b = b.act(ctx, i, f.clone())?;
+                let new_c = act_formula(ctx, c, i, f.clone())?;
 
                 if Rc::ptr_eq(b, &new_b) && new_c.is_none() {
                     Ok(self.clone())
                 } else {
-                    app_formula(ctx.clone(), new_b, new_c.unwrap_or(c.clone()))
+                    app_formula(ctx, &new_b, new_c.unwrap_or(c.clone()))
                 }
             }
             Term::Comp(a, v, ts, _) => {
-                let new_a = a.act(ctx.clone(), i, f.clone())?;
-                let new_v = v.act(ctx.clone(), i, f.clone())?;
+                let new_a = a.act(ctx, i, f.clone())?;
+                let new_v = v.act(ctx, i, f.clone())?;
 
-                let new_ts = act_system(ctx.clone(), ts, i, f.clone())?;
+                let new_ts = act_system(ctx, ts, i, f.clone())?;
 
                 if Rc::ptr_eq(a, &new_a) && Rc::ptr_eq(v, &new_v) && new_ts.is_none() {
                     Ok(self.clone())
                 } else {
-                    comp_line(ctx.clone(), new_a, new_v, new_ts.unwrap_or(ts.clone()))
+                    comp_line(ctx, &new_a, &new_v, new_ts.unwrap_or(ts.clone()))
                 }
             }
             Term::HComp(a, u, us, _) => {
-                let new_a = a.act(ctx.clone(), i, f.clone())?;
-                let new_u = u.act(ctx.clone(), i, f.clone())?;
+                let new_a = a.act(ctx, i, f.clone())?;
+                let new_u = u.act(ctx, i, f.clone())?;
 
-                let new_us = act_system(ctx.clone(), us, i, f)?;
+                let new_us = act_system(ctx, us, i, f)?;
 
                 if Rc::ptr_eq(a, &new_a) && Rc::ptr_eq(u, &new_u) && new_us.is_none() {
                     Ok(self.clone())
                 } else {
-                    hcomp(ctx.clone(), new_a, new_u, new_us.unwrap_or(us.clone()))
+                    hcomp(ctx, &new_a, &new_u, new_us.unwrap_or(us.clone()))
                 }
             }
             Term::Glue(a, ts, m) => {
-                let new_a = a.act(ctx.clone(), i, f.clone())?;
-                let new_ts = act_system(ctx.clone(), ts, i, f)?;
+                let new_a = a.act(ctx, i, f.clone())?;
+                let new_ts = act_system(ctx, ts, i, f)?;
 
                 if Rc::ptr_eq(a, &new_a) && new_ts.is_none() {
                     Ok(self.clone())
                 } else {
-                    Ok(glue(new_a, new_ts.unwrap_or(ts.clone()), m.clone()))
+                    Ok(glue(&new_a, new_ts.unwrap_or(ts.clone()), m.clone()))
                 }
             }
             Term::GlueElem(a, ts, m) => {
-                let new_a = a.act(ctx.clone(), i, f.clone())?;
-                let new_ts = act_system(ctx.clone(), ts, i, f)?;
+                let new_a = a.act(ctx, i, f.clone())?;
+                let new_ts = act_system(ctx, ts, i, f)?;
                 if Rc::ptr_eq(a, &new_a) && new_ts.is_none() {
                     Ok(self.clone())
                 } else {
-                    Ok(glue_elem(new_a, new_ts.unwrap_or(ts.clone()), m.clone()))
+                    Ok(glue_elem(&new_a, new_ts.unwrap_or(ts.clone()), m.clone()))
                 }
             }
             Term::UnGlueElem(a, ts, m) => {
-                let new_a = a.act(ctx.clone(), i, f.clone())?;
-                let new_ts = act_system(ctx.clone(), ts, i, f)?;
+                let new_a = a.act(ctx, i, f.clone())?;
+                let new_ts = act_system(ctx, ts, i, f)?;
 
                 if Rc::ptr_eq(a, &new_a) && new_ts.is_none() {
                     Ok(self.clone())
                 } else {
-                    unglue_elem(ctx.clone(), new_a, new_ts.unwrap_or(ts.clone()), m.clone())
+                    unglue_elem(ctx, &new_a, new_ts.unwrap_or(ts.clone()), m.clone())
                 }
             }
             Term::UnGlueElemU(a, b, ts, m) => {
-                let new_a = a.act(ctx.clone(), i, f.clone())?;
-                let new_b = b.act(ctx.clone(), i, f.clone())?;
-                let new_ts = act_system(ctx.clone(), ts, i, f)?;
+                let new_a = a.act(ctx, i, f.clone())?;
+                let new_b = b.act(ctx, i, f.clone())?;
+                let new_ts = act_system(ctx, ts, i, f)?;
 
                 if Rc::ptr_eq(a, &new_a) && Rc::ptr_eq(b, &new_b) && new_ts.is_none() {
                     Ok(self.clone())
                 } else {
-                    unglue_u(
-                        ctx.clone(),
-                        new_a,
-                        new_b,
-                        new_ts.unwrap_or(ts.clone()),
-                        m.clone(),
-                    )
+                    unglue_u(ctx, &new_a, &new_b, new_ts.unwrap_or(ts.clone()), m.clone())
                 }
             }
             Term::Id(a, u, v, m) => {
-                let new_a = a.act(ctx.clone(), i, f.clone())?;
-                let new_u = u.act(ctx.clone(), i, f.clone())?;
-                let new_v = v.act(ctx.clone(), i, f.clone())?;
+                let new_a = a.act(ctx, i, f.clone())?;
+                let new_u = u.act(ctx, i, f.clone())?;
+                let new_v = v.act(ctx, i, f.clone())?;
 
                 if Rc::ptr_eq(a, &new_a) && Rc::ptr_eq(u, &new_u) && Rc::ptr_eq(v, &new_v) {
                     Ok(self.clone())
@@ -411,8 +395,8 @@ impl Nominal for Rc<Term> {
                 }
             }
             Term::IdPair(u, us, m) => {
-                let new_u = u.act(ctx.clone(), i, f.clone())?;
-                let new_us = act_system(ctx.clone(), us, i, f)?;
+                let new_u = u.act(ctx, i, f.clone())?;
+                let new_us = act_system(ctx, us, i, f)?;
 
                 if Rc::ptr_eq(u, &new_u) && new_us.is_none() {
                     Ok(self.clone())
@@ -425,12 +409,12 @@ impl Nominal for Rc<Term> {
                 }
             }
             Term::IdJ(a, u, c, d, x, p, m) => {
-                let new_a = a.act(ctx.clone(), i, f.clone())?;
-                let new_u = u.act(ctx.clone(), i, f.clone())?;
-                let new_c = c.act(ctx.clone(), i, f.clone())?;
-                let new_d = d.act(ctx.clone(), i, f.clone())?;
-                let new_x = x.act(ctx.clone(), i, f.clone())?;
-                let new_p = p.act(ctx.clone(), i, f.clone())?;
+                let new_a = a.act(ctx, i, f.clone())?;
+                let new_u = u.act(ctx, i, f.clone())?;
+                let new_c = c.act(ctx, i, f.clone())?;
+                let new_d = d.act(ctx, i, f.clone())?;
+                let new_x = x.act(ctx, i, f.clone())?;
+                let new_p = p.act(ctx, i, f.clone())?;
 
                 if Rc::ptr_eq(&a, &new_a)
                     && Rc::ptr_eq(&u, &new_u)
@@ -585,66 +569,60 @@ impl Nominal for Rc<Term> {
 impl Nominal for System<Term> {
     fn support(&self) -> Vec<Identifier> {
         let mut result = vec![];
-        for (k, v) in &self.binds {
+        for (k, v) in self.iter() {
             result.extend(k.binds.keys());
             result.extend(v.support());
         }
         result
     }
 
-    fn act(&self, ctx: TypeContext, i: &Identifier, phi: Formula) -> Result<Self, TypeError> {
-        let mut result = System {
-            binds: HashMap::new(),
-        };
-        for (alpha, u) in self.binds.iter() {
+    fn act(&self, ctx: &TypeContext, i: &Identifier, phi: Formula) -> Result<Self, TypeError> {
+        let mut result = HashMap::new();
+        for (alpha, u) in self.iter() {
             if let Some(d) = alpha.binds.get(i) {
                 let mut beta = alpha.clone();
                 beta.binds.remove(i);
 
-                let s = inv_formula(phi.clone().face(ctx.clone(), &beta)?, d.clone());
+                let s = inv_formula(phi.clone().face(ctx, &beta)?, d.clone());
                 for delta in s {
                     let mut delta_ = delta.clone();
                     delta_.binds.remove(i);
                     let db = delta.meet(&beta);
-                    let t = u.clone().face(ctx.clone(), &delta_)?;
-                    result.binds.insert(db, t);
+                    let t = u.clone().face(ctx, &delta_)?;
+                    result.insert(db, t);
                 }
             } else {
-                result.binds.insert(
+                result.insert(
                     alpha.clone(),
-                    u.act(ctx.clone(), i, phi.clone().face(ctx.clone(), &alpha)?)?,
+                    u.act(ctx, i, phi.clone().face(ctx, &alpha)?)?,
                 );
             }
         }
-        Ok(result)
+        Ok(System::from(result))
     }
 
     fn swap(&self, from: &Identifier, to: &Identifier) -> Self {
-        System {
-            binds: self
-                .binds
-                .iter()
-                .map(|(alpha, t_alpha)| {
-                    let beta = Face {
-                        binds: alpha
-                            .binds
-                            .iter()
-                            .map(|(n, d)| {
-                                let k = if n == from {
-                                    to
-                                } else if n == to {
-                                    from
-                                } else {
-                                    n
-                                };
-                                (k.clone(), d.clone())
-                            })
-                            .collect(),
-                    };
-                    (beta, t_alpha.swap(from, to))
-                })
-                .collect(),
-        }
+        self.iter()
+            .map(|(alpha, t_alpha)| {
+                let beta = Face {
+                    binds: alpha
+                        .binds
+                        .iter()
+                        .map(|(n, d)| {
+                            let k = if n == from {
+                                to
+                            } else if n == to {
+                                from
+                            } else {
+                                n
+                            };
+                            (k.clone(), d.clone())
+                        })
+                        .collect(),
+                };
+                (beta, t_alpha.swap(from, to))
+            })
+            .collect()
     }
 }
 
@@ -670,7 +648,7 @@ impl Nominal for Formula {
         result
     }
 
-    fn act(&self, ctx: TypeContext, i: &Identifier, phi: Formula) -> Result<Self, TypeError> {
+    fn act(&self, ctx: &TypeContext, i: &Identifier, phi: Formula) -> Result<Self, TypeError> {
         match self {
             Formula::Dir(d) => Ok(Formula::Dir(d.clone())),
             Formula::Atom(j) => {
@@ -689,12 +667,12 @@ impl Nominal for Formula {
             }
             Formula::And(psi1, psi2) => Ok(psi1
                 .as_ref()
-                .act(ctx.clone(), i, phi.clone())?
-                .and(&psi2.as_ref().act(ctx.clone(), i, phi.clone())?)),
+                .act(ctx, i, phi.clone())?
+                .and(&psi2.as_ref().act(ctx, i, phi.clone())?)),
             Formula::Or(psi1, psi2) => Ok(psi1
                 .as_ref()
-                .act(ctx.clone(), i, phi.clone())?
-                .or(&psi2.as_ref().act(ctx.clone(), i, phi.clone())?)),
+                .act(ctx, i, phi.clone())?
+                .or(&psi2.as_ref().act(ctx, i, phi.clone())?)),
         }
     }
 
@@ -731,4 +709,66 @@ impl Nominal for Formula {
                 .or(&psi2.as_ref().swap(from, to)),
         }
     }
+}
+
+pub trait Facing: Sized {
+    fn face(&self, ctx: &TypeContext, face: &Face) -> Result<Self, TypeError>;
+}
+
+impl<A: Nominal + Clone> Facing for A {
+    fn face(&self, ctx: &TypeContext, face: &Face) -> Result<A, TypeError> {
+        face.binds.iter().fold(Ok(self.clone()), |a, (i, d)| {
+            a?.act(ctx, i, Formula::Dir(d.clone()))
+        })
+    }
+}
+
+pub fn conj<A: Nominal>(
+    ctx: &TypeContext,
+    a: &A,
+    i: &Identifier,
+    j: &Identifier,
+) -> Result<A, TypeError> {
+    a.act(
+        ctx,
+        i,
+        Formula::And(
+            Box::new(Formula::Atom(i.clone())),
+            Box::new(Formula::Atom(j.clone())),
+        ),
+    )
+}
+
+pub fn disj<A: Nominal>(
+    ctx: &TypeContext,
+    a: &A,
+    i: &Identifier,
+    j: &Identifier,
+) -> Result<A, TypeError> {
+    a.act(
+        ctx,
+        i,
+        Formula::Or(
+            Box::new(Formula::Atom(i.clone())),
+            Box::new(Formula::Atom(j.clone())),
+        ),
+    )
+}
+
+pub fn sym<A: Nominal>(ctx: &TypeContext, a: &A, i: &Identifier) -> Result<A, TypeError> {
+    a.act(ctx, i, Formula::NegAtom(i.clone()))
+}
+
+pub fn border<A, B: Clone>(
+    ctx: &TypeContext,
+    value: &Rc<A>,
+    shape: &System<B>,
+) -> Result<System<A>, TypeError>
+where
+    Rc<A>: Facing,
+{
+    Ok(shape
+        .iter()
+        .map(|(f, _)| Ok((f.clone(), value.face(ctx, f)?)))
+        .collect::<Result<_, TypeError>>()?)
 }

@@ -9,7 +9,7 @@ use std::rc::Rc;
 
 #[derive(Clone)]
 pub struct Telescope {
-    scopes: Vec<(Vec<Identifier>, Rc<term::Term>)>,
+    scopes: Vec<(Vec<Identifier>, Rc<term::Term<()>>)>,
     ctx: ResolveContext,
 }
 
@@ -73,7 +73,7 @@ impl Telescope {
     fn through<R>(
         self,
         result: impl FnOnce(ResolveContext) -> Result<R, ResolveError>,
-        layer: &impl Fn(&Identifier, &term::Term, R) -> Result<R, ResolveError>,
+        layer: &impl Fn(&Identifier, &term::Term<()>, R) -> Result<R, ResolveError>,
     ) -> Result<R, ResolveError> {
         self.scopes
             .iter()
@@ -82,45 +82,48 @@ impl Telescope {
             })
     }
 
-    pub fn lambda<B: FnOnce(ResolveContext) -> Result<Rc<term::Term>, ResolveError>>(
+    pub fn lambda<B: FnOnce(ResolveContext) -> Result<Rc<term::Term<()>>, ResolveError>>(
         self,
         body: B,
-    ) -> Result<Rc<term::Term>, ResolveError> {
+    ) -> Result<Rc<term::Term<()>>, ResolveError> {
         self.through(|ctx| body(ctx), &|name, tpe, body| {
             let tpe = Rc::new(tpe.clone());
-            Ok(Rc::new(term::Term::Lam(name.clone(), tpe.clone(), body)))
+            Ok(Rc::new(term::Term::Lam(
+                name.clone(),
+                tpe.clone(),
+                body,
+                (),
+            )))
         })
     }
 
-    pub fn pi<R: FnOnce(ResolveContext) -> Result<Rc<term::Term>, ResolveError>>(
+    pub fn pi<R: FnOnce(ResolveContext) -> Result<Rc<term::Term<()>>, ResolveError>>(
         self,
         result_type: R,
-    ) -> Result<Rc<term::Term>, ResolveError> {
+    ) -> Result<Rc<term::Term<()>>, ResolveError> {
         self.through(|ctx| result_type(ctx), &|name, tpe, result_type| {
             let tpe = Rc::new(tpe.clone());
-            Ok(Rc::new(term::Term::Pi(Rc::new(term::Term::Lam(
-                name.clone(),
-                tpe,
-                result_type,
-            )))))
+            Ok(Rc::new(term::Term::Pi(
+                Rc::new(term::Term::Lam(name.clone(), tpe, result_type, ())),
+                (),
+            )))
         })
     }
 
-    pub fn sigma<R: FnOnce(ResolveContext) -> Result<Rc<term::Term>, ResolveError>>(
+    pub fn sigma<R: FnOnce(ResolveContext) -> Result<Rc<term::Term<()>>, ResolveError>>(
         self,
         result_type: R,
-    ) -> Result<Rc<term::Term>, ResolveError> {
+    ) -> Result<Rc<term::Term<()>>, ResolveError> {
         self.through(|ctx| result_type(ctx), &|name, tpe, result_type| {
             let tpe = Rc::new(tpe.clone());
-            Ok(Rc::new(term::Term::Sigma(Rc::new(term::Term::Lam(
-                name.clone(),
-                tpe,
-                result_type,
-            )))))
+            Ok(Rc::new(term::Term::Sigma(
+                Rc::new(term::Term::Lam(name.clone(), tpe, result_type, ())),
+                (),
+            )))
         })
     }
 
-    pub fn resolve(self) -> (term::Telescope<term::Term>, ResolveContext) {
+    pub fn resolve(self) -> (term::Telescope<term::Term<()>>, ResolveContext) {
         let scope = term::Telescope {
             variables: self
                 .scopes

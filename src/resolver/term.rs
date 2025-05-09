@@ -8,12 +8,11 @@ use crate::parser::ast;
 use crate::resolver::error::ResolveError;
 use std::collections::HashMap;
 use std::rc::Rc;
-use crate::ctt::term;
 
-fn where_chain(decls: Vec<DeclarationSet<Term>>, head: Rc<Term>) -> Rc<Term> {
+fn where_chain(decls: Vec<DeclarationSet<Term<()>>>, head: Rc<Term<()>>) -> Rc<Term<()>> {
     decls
         .into_iter()
-        .rfold(head, |acc, decl| Rc::new(Term::Where(acc, decl)))
+        .rfold(head, |acc, decl| Rc::new(Term::Where(acc, decl, ())))
 }
 
 fn unique_id() -> Identifier {
@@ -66,7 +65,7 @@ fn open_formula_app(t: ast::Term) -> (Box<ast::Term>, Vec<ast::Term>, Vec<ast::F
     (a, b, c)
 }
 
-pub fn resolve_term(ctx: ResolveContext, term: ast::Term) -> Result<Rc<Term>, ResolveError> {
+pub fn resolve_term(ctx: ResolveContext, term: ast::Term) -> Result<Rc<Term<()>>, ResolveError> {
     match term {
         ast::Term::Var(name) => Ok(Rc::new(ctx.resolve_var(&name)?)),
         ast::Term::Where(expr, decls) => {
@@ -84,7 +83,7 @@ pub fn resolve_term(ctx: ResolveContext, term: ast::Term) -> Result<Rc<Term>, Re
             let ctx = ctx.with_names(names.clone());
             let body = resolve_term(ctx.clone(), *body)?;
             Ok(names.into_iter().rfold(body, |acc, name| {
-                Rc::new(Term::PLam(ctx.resolve_name(&name).unwrap(), acc))
+                Rc::new(Term::PLam(ctx.resolve_name(&name).unwrap(), acc, ()))
             }))
         }
         ast::Term::Split(obj, branches) => {
@@ -96,13 +95,18 @@ pub fn resolve_term(ctx: ResolveContext, term: ast::Term) -> Result<Rc<Term>, Re
                 unique_id(),
                 resolve_term(ctx, *obj)?,
                 branches,
+                (),
             )))
         }
-        ast::Term::Fun(arg, result) => Ok(Rc::new(Term::Pi(Rc::new(Term::Lam(
-            anon_id(),
-            resolve_term(ctx.clone(), *arg)?,
-            resolve_term(ctx, *result)?,
-        ))))),
+        ast::Term::Fun(arg, result) => Ok(Term::pi(
+            &Term::lam(
+                anon_id(),
+                &resolve_term(ctx.clone(), *arg)?,
+                &resolve_term(ctx, *result)?,
+                (),
+            ),
+            (),
+        )),
         ast::Term::Pi(args, result) => {
             Telescope::from_ptele(ctx, args)?.pi(|ctx| resolve_term(ctx, *result))
         }
@@ -126,6 +130,7 @@ pub fn resolve_term(ctx: ResolveContext, term: ast::Term) -> Result<Rc<Term>, Re
                     phis.into_iter()
                         .map(|f| resolve_formula(ctx.clone(), f))
                         .collect::<Result<_, ResolveError>>()?,
+                    (),
                 )))
             } else {
                 let ast::Term::AppFormula(t, phi) = app else {
@@ -134,82 +139,93 @@ pub fn resolve_term(ctx: ResolveContext, term: ast::Term) -> Result<Rc<Term>, Re
                 Ok(Rc::new(Term::AppFormula(
                     resolve_term(ctx.clone(), *t)?,
                     resolve_formula(ctx, *phi)?,
+                    (),
                 )))
             }
         }
         ast::Term::App(f, a) => {
             let (fun, args) = open_app(ast::Term::App(f, a));
             let fun = resolve_term(ctx.clone(), *fun)?;
-            let args: Vec<Rc<Term>> = args
+            let args: Vec<Rc<Term<()>>> = args
                 .into_iter()
                 .map(|a| resolve_term(ctx.clone(), a))
                 .collect::<Result<_, ResolveError>>()?;
             match fun.as_ref() {
-                Term::Con(label, add_args) => {
+                Term::Con(label, add_args, _) => {
                     let mut fields = add_args.clone();
                     fields.append(&mut args.clone());
-                    Ok(Rc::new(Term::Con(label.clone(), fields)))
+                    Ok(Rc::new(Term::Con(label.clone(), fields, ())))
                 }
                 _ => Ok(args
                     .into_iter()
-                    .fold(fun, |acc, arg| Rc::new(Term::App(acc, arg)))),
+                    .fold(fun, |acc, arg| Rc::new(Term::App(acc, arg, ())))),
             }
         }
-        ast::Term::Fst(pair) => Ok(Rc::new(Term::Fst(resolve_term(ctx, *pair)?))),
-        ast::Term::Snd(pair) => Ok(Rc::new(Term::Snd(resolve_term(ctx, *pair)?))),
+        ast::Term::Fst(pair) => Ok(Rc::new(Term::Fst(resolve_term(ctx, *pair)?, ()))),
+        ast::Term::Snd(pair) => Ok(Rc::new(Term::Snd(resolve_term(ctx, *pair)?, ()))),
         ast::Term::Pair(fst, mut scd) => {
             let last = resolve_term(ctx.clone(), *scd.pop().unwrap())?;
             let paired = scd.into_iter().rfold(Ok(last), |acc, t| {
                 let head = resolve_term(ctx.clone(), *t)?;
-                Ok(Rc::new(Term::Pair(head, acc?)))
+                Ok(Rc::new(Term::Pair(head, acc?, ())))
             })?;
-            Ok(Rc::new(Term::Pair(resolve_term(ctx, *fst)?, paired)))
+            Ok(Rc::new(Term::Pair(resolve_term(ctx, *fst)?, paired, ())))
         }
         ast::Term::PathP(a, u, v) => Ok(Rc::new(Term::PathP(
             resolve_term(ctx.clone(), *a)?,
             resolve_term(ctx.clone(), *u)?,
             resolve_term(ctx, *v)?,
+            (),
         ))),
         ast::Term::Comp(u, v, ts) => Ok(Rc::new(Term::Comp(
             resolve_term(ctx.clone(), *u)?,
             resolve_term(ctx.clone(), *v)?,
             resolve_system(ctx, ts)?,
+            (),
         ))),
         ast::Term::HComp(u, v, ts) => Ok(Rc::new(Term::HComp(
             resolve_term(ctx.clone(), *u)?,
             resolve_term(ctx.clone(), *v)?,
             resolve_system(ctx, ts)?,
+            (),
         ))),
         ast::Term::Trans(u, v) => Ok(Rc::new(Term::Comp(
             resolve_term(ctx.clone(), *u)?,
             resolve_term(ctx, *v)?,
             System::empty(),
+            (),
         ))),
         ast::Term::Fill(u, v, ts) => Ok(Rc::new(Term::Fill(
             resolve_term(ctx.clone(), *u)?,
             resolve_term(ctx.clone(), *v)?,
             resolve_system(ctx, ts)?,
+            (),
         ))),
         ast::Term::Glue(u, ts) => Ok(Rc::new(Term::Glue(
             resolve_term(ctx.clone(), *u)?,
             resolve_system(ctx, ts)?,
+            (),
         ))),
         ast::Term::GlueElem(u, ts) => Ok(Rc::new(Term::GlueElem(
             resolve_term(ctx.clone(), *u)?,
             resolve_system(ctx, ts)?,
+            (),
         ))),
         ast::Term::UnGlueElem(u, ts) => Ok(Rc::new(Term::UnGlueElem(
             resolve_term(ctx.clone(), *u)?,
             resolve_system(ctx, ts)?,
+            (),
         ))),
         ast::Term::Id(a, u, v) => Ok(Rc::new(Term::Id(
             resolve_term(ctx.clone(), *a)?,
             resolve_term(ctx.clone(), *u)?,
             resolve_term(ctx.clone(), *v)?,
+            (),
         ))),
         ast::Term::IdPair(u, ts) => Ok(Rc::new(Term::IdPair(
             resolve_term(ctx.clone(), *u)?,
             resolve_system(ctx, ts)?,
+            (),
         ))),
         ast::Term::IdJ(a, t, c, d, x, p) => Ok(Rc::new(Term::IdJ(
             resolve_term(ctx.clone(), *a)?,
@@ -218,6 +234,7 @@ pub fn resolve_term(ctx: ResolveContext, term: ast::Term) -> Result<Rc<Term>, Re
             resolve_term(ctx.clone(), *d)?,
             resolve_term(ctx.clone(), *x)?,
             resolve_term(ctx.clone(), *p)?,
+            (),
         ))),
         ast::Term::U => Ok(Rc::new(Term::U)),
         ast::Term::Hole => Ok(Rc::new(Term::Hole)),
@@ -278,7 +295,7 @@ fn resolve_formula(ctx: ResolveContext, formula: ast::Formula) -> Result<Formula
 pub fn resolve_label(
     ctx: ResolveContext,
     label: ast::Label,
-) -> Result<Label<Term>, ResolveError> {
+) -> Result<Label<Term<()>>, ResolveError> {
     match label {
         ast::Label::OLabel(name, tele) => {
             let name = ctx.resolve_identifier(&name)?;
@@ -304,7 +321,10 @@ pub fn resolve_label(
     }
 }
 
-pub fn resolve_branch(ctx: ResolveContext, branch: ast::Branch) -> Result<Branch<Term>, ResolveError> {
+pub fn resolve_branch(
+    ctx: ResolveContext,
+    branch: ast::Branch,
+) -> Result<Branch<Term<()>>, ResolveError> {
     match branch {
         ast::Branch::OBranch(name, params, body) => {
             let ctx = ctx.with_vars(params.clone());
@@ -339,25 +359,26 @@ pub fn resolve_branch(ctx: ResolveContext, branch: ast::Branch) -> Result<Branch
     }
 }
 
-fn resolve_system(ctx: ResolveContext, system: ast::System) -> Result<System<Term>, ResolveError> {
+fn resolve_system(
+    ctx: ResolveContext,
+    system: ast::System,
+) -> Result<System<Term<()>>, ResolveError> {
     let ast::System(sides) = system;
-    Ok(System {
-        binds: sides
-            .into_iter()
-            .map(|side| {
-                let faces = side
-                    .faces
-                    .into_iter()
-                    .map(|f| {
-                        ctx.resolve_name(&f.id)?;
-                        Ok(match f.dir {
-                            ast::Dir::Zero => (ctx.resolve_name(&f.id)?, Dir::Zero),
-                            ast::Dir::One => (ctx.resolve_name(&f.id)?, Dir::One),
-                        })
+    Ok(sides
+        .into_iter()
+        .map(|side| {
+            let faces = side
+                .faces
+                .into_iter()
+                .map(|f| {
+                    ctx.resolve_name(&f.id)?;
+                    Ok(match f.dir {
+                        ast::Dir::Zero => (ctx.resolve_name(&f.id)?, Dir::Zero),
+                        ast::Dir::One => (ctx.resolve_name(&f.id)?, Dir::One),
                     })
-                    .collect::<Result<_, ResolveError>>()?;
-                Ok((Face { binds: faces }, resolve_term(ctx.clone(), *side.exp)?))
-            })
-            .collect::<Result<HashMap<Face, Rc<Term>>, ResolveError>>()?,
-    })
+                })
+                .collect::<Result<_, ResolveError>>()?;
+            Ok((Face { binds: faces }, resolve_term(ctx.clone(), *side.exp)?))
+        })
+        .collect::<Result<_, ResolveError>>()?)
 }

@@ -14,7 +14,6 @@ use std::io::Read;
 use std::path::Path;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, SystemTime};
 
 struct CachedReader {
     cache: HashMap<String, Module>,
@@ -98,7 +97,7 @@ fn main() {
         let modules = mark_erased(&modules);
 
         for set in modules.iter() {
-            ctx = check_declaration_set(ctx, &set).unwrap();
+            ctx = check_declaration_set(&ctx, &set).unwrap();
         }
     }
 }
