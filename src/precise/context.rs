@@ -1,5 +1,4 @@
 use crate::ctt::term::Identifier;
-use std::backtrace::Backtrace;
 use std::collections::HashMap;
 
 pub struct Constraints {
@@ -13,6 +12,12 @@ pub enum SimpleType {
     Var(usize),
     Strict,
     Fun(Box<SimpleType>, Box<SimpleType>),
+}
+
+impl Default for Constraints {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Constraints {
@@ -35,7 +40,7 @@ impl Constraints {
     }
 
     pub fn add(&mut self, n: &Identifier, t: SimpleType) {
-        self.binds.insert(n.clone(), t);
+        self.binds.insert(*n, t);
     }
 
     pub fn apply(&self, t: &SimpleType) -> SimpleType {
@@ -68,11 +73,11 @@ impl Constraints {
             (SimpleType::Strict, SimpleType::Fun(_, _)) => (),
             (SimpleType::Fun(_, _), SimpleType::Strict) => (),
             (SimpleType::Var(name), _) => {
-                self.subs.insert(name.clone(), t2.clone());
+                self.subs.insert(*name, t2.clone());
             }
 
             (_, SimpleType::Var(name)) => {
-                self.subs.insert(name.clone(), t1.clone());
+                self.subs.insert(*name, t1.clone());
             }
             (SimpleType::Fun(in1, out1), SimpleType::Fun(in2, out2)) => {
                 self.unify(in1.as_ref(), in2.as_ref());

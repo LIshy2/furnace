@@ -65,12 +65,12 @@ impl<D: Demangler> ProgressNotifier for CliNotifier<D> {
         );
 
         let mut spinners = self.spinners.lock().unwrap();
-        spinners.insert(decl_name.clone(), bar);
+        spinners.insert(*decl_name, bar);
     }
 
     fn decl_check_finished(&self, decl_name: &Identifier) {
         let mut spinners = self.spinners.lock().unwrap();
-        let mut spinner = spinners.get_mut(decl_name).unwrap();
+        let spinner = spinners.get_mut(decl_name).unwrap();
         spinner.stop_and_persist(
             "✔",
             format!("Checked {}!", self.demangler.demangle(decl_name)),
@@ -97,7 +97,7 @@ fn main() {
         let modules = mark_erased(&modules);
 
         for set in modules.iter() {
-            ctx = check_declaration_set(&ctx, &set).unwrap();
+            ctx = check_declaration_set(&ctx, set).unwrap();
         }
     }
 }

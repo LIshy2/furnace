@@ -10,7 +10,6 @@ use crate::typechecker::context::{ProgressNotifier, TypeContext};
 use crate::typechecker::equiv::Equiv;
 use crate::typechecker::error::{ErrorCause, TypeError};
 use crate::typechecker::infer::{const_path, infer, label_type};
-use crate::utils::intersect;
 use std::collections::HashSet;
 use std::rc::Rc;
 
@@ -20,7 +19,7 @@ fn check_family(ctx: &TypeContext, f: &Rc<Term>) -> Result<(), TypeError> {
     };
     let tpe = eval(ctx, tpe)?;
     check(ctx, &tpe, &Term::u())?;
-    let body_ctx = ctx.with_term(name, &Term::var(name.clone(), Mod::Precise), &tpe);
+    let body_ctx = ctx.with_term(name, &Term::var(*name, Mod::Precise), &tpe);
     check(&body_ctx, body, &Term::u())
 }
 
@@ -29,8 +28,8 @@ fn check_tele(ctx: &TypeContext, tele: &Telescope<Term>) -> Result<TypeContext, 
     for (name, tpe) in tele.variables.iter() {
         check(&result, tpe, &Term::u())?;
         result = result.with_term(
-            &name,
-            &Term::var(name.clone(), Mod::Precise),
+            name,
+            &Term::var(*name, Mod::Precise),
             &eval(&result, tpe)?,
         );
     }
@@ -50,52 +49,51 @@ fn check_branch(
             let mut branch_ctx = ctx.clone();
             let mut vars = vec![];
             for ((_, tpe), bind) in tele.variables.iter().zip(ns) {
-                let var = Term::var(bind.clone(), Mod::Precise);
+                let var = Term::var(*bind, Mod::Precise);
                 vars.push(var.clone());
                 branch_ctx = branch_ctx.with_term(bind, &var, &eval(&branch_ctx, tpe)?);
             }
             let f_tpe = app(
                 &branch_ctx,
                 split_tpe,
-                &Term::con(c.clone(), vars, Mod::Precise),
+                &Term::con(*c, vars, Mod::Precise),
             )?;
             check(&branch_ctx, body, &f_tpe)
         }
         (Label::PLabel(_, tele, is, ts), Branch::PBranch(c, ns, js, body)) => {
             let mut sys_ctx = ctx.uncompacted();
             for (i, j) in is.iter().zip(js) {
-                sys_ctx = sys_ctx.with_formula(i, Formula::Atom(j.clone()));
+                sys_ctx = sys_ctx.with_formula(i, Formula::Atom(*j));
             }
             for (name, tpe) in &tele.variables {
                 sys_ctx = sys_ctx.with_term(
-                    &name,
-                    &Term::var(name.clone(), Mod::Precise),
+                    name,
+                    &Term::var(*name, Mod::Precise),
                     &eval(&sys_ctx, tpe)?,
                 );
             }
             let vts = eval_system(&sys_ctx, ts)?;
             let vgts = System::intersect(&border(&sys_ctx, split, &vts)?, &vts)
-                .into_iter()
                 .map(|(k, (a, b))| Ok((k.clone(), app(&sys_ctx, a, b)?)))
                 .collect::<Result<_, TypeError>>()?;
             let mut branch_ctx = ctx.uncompacted();
             let mut vars = vec![];
             for ((_, tpe), bind) in tele.variables.iter().zip(ns) {
-                let var = Rc::new(Term::Var(bind.clone(), Mod::Precise));
+                let var = Rc::new(Term::Var(*bind, Mod::Precise));
                 vars.push(var.clone());
-                branch_ctx = branch_ctx.with_term(bind, &var, &eval(&branch_ctx, &tpe)?);
+                branch_ctx = branch_ctx.with_term(bind, &var, &eval(&branch_ctx, tpe)?);
             }
             for j in js {
-                branch_ctx = branch_ctx.with_formula(j, Formula::Atom(j.clone()));
+                branch_ctx = branch_ctx.with_formula(j, Formula::Atom(*j));
             }
             let b_tpe = app(
                 &branch_ctx,
                 split_tpe,
                 &Term::pcon(
-                    c.clone(),
+                    *c,
                     tpe,
                     vars,
-                    js.iter().map(|j| Formula::Atom(j.clone())).collect(),
+                    js.iter().map(|j| Formula::Atom(*j)).collect(),
                     Mod::Precise,
                 ),
             )?;
@@ -159,15 +157,15 @@ pub fn check_plam(
     // println!("CHECKING PLAM {:?} {:?}", term, tpe);
     match term.as_ref() {
         Term::PLam(int, body, _) => {
-            let new_ctx = ctx.with_formula(&int, Formula::Atom(int.clone()));
+            let new_ctx = ctx.with_formula(int, Formula::Atom(*int));
             check(
                 &new_ctx,
-                &body,
-                &app_formula(&ctx, &tpe, Formula::Atom(int.clone()))?,
+                body,
+                &app_formula(ctx, tpe, Formula::Atom(*int))?,
             )?;
             Ok((
-                eval(&new_ctx.with_formula(&int, Formula::Dir(Dir::Zero)), body)?,
-                eval(&new_ctx.with_formula(&int, Formula::Dir(Dir::One)), body)?,
+                eval(&new_ctx.with_formula(int, Formula::Dir(Dir::Zero)), body)?,
+                eval(&new_ctx.with_formula(int, Formula::Dir(Dir::One)), body)?,
             ))
         }
         _ => {
@@ -203,8 +201,8 @@ pub fn check_plam_system(
     let v = ps
         .iter()
         .map(|(alpha, p_alpha)| {
-            let face_ctx = ctx.with_face(&alpha)?;
-            let (a0, a1) = check_plam(&face_ctx, p_alpha, &va.face(ctx, &alpha)?)?;
+            let face_ctx = ctx.with_face(alpha)?;
+            let (a0, a1) = check_plam(&face_ctx, p_alpha, &va.face(ctx, alpha)?)?;
             if Equiv::equiv(&face_ctx, &a0, &eval(&face_ctx, t0)?)? {
                 Ok((alpha.clone(), a1))
             } else {
@@ -212,7 +210,7 @@ pub fn check_plam_system(
             }
         })
         .collect::<Result<_, TypeError>>()?;
-    check_comp_system(ctx, &eval_system(ctx, &ps)?)?;
+    check_comp_system(ctx, &eval_system(ctx, ps)?)?;
     Ok(v)
 }
 
@@ -226,7 +224,7 @@ fn check_equiv(ctx: &TypeContext, term: &Rc<Term>, tpe: &Rc<Term>) -> Result<(),
         let s_lit = ctx.fresh();
         let z_lit = ctx.fresh();
 
-        let new_ctx = ctx.with_term(&a_lit, &tpe, &Term::u());
+        let new_ctx = ctx.with_term(&a_lit, tpe, &Term::u());
         let t = Term::var(t_lit, Mod::Precise);
         let a = Term::var(a_lit, Mod::Precise);
         let x = Term::var(x_lit, Mod::Precise);
@@ -300,7 +298,7 @@ fn check_equiv(ctx: &TypeContext, term: &Rc<Term>, tpe: &Rc<Term>) -> Result<(),
 
 fn check_glue(ctx: &TypeContext, tpe: &Rc<Term>, system: &System<Term>) -> Result<(), TypeError> {
     for (alpha, t_alpha) in system.iter() {
-        check_equiv(ctx, t_alpha, &tpe.face(ctx, &alpha)?)?;
+        check_equiv(ctx, t_alpha, &tpe.face(ctx, alpha)?)?;
     }
     check_comp_system(ctx, &eval_system(ctx, system)?)
 }
@@ -315,18 +313,18 @@ fn check_glue_elem(
         Err(ErrorCause::Hole)?
     }
 
-    for (alpha, (vt, u)) in System::intersect(&system1, &system2) {
+    for (alpha, (vt, u)) in System::intersect(system1, system2) {
         let face_ctx = ctx.with_face(alpha)?;
         check(&face_ctx, u, &equiv_dom(vt))?;
     }
 
     let vus = eval_system(ctx, system2)?;
 
-    for (alpha, (vt, v_alpha)) in System::intersect(&system1, &vus) {
+    for (alpha, (vt, v_alpha)) in System::intersect(system1, &vus) {
         if !Equiv::equiv(
             ctx,
             &app(ctx, &equiv_fun(vt), v_alpha)?,
-            &term.face(ctx, &alpha)?,
+            &term.face(ctx, alpha)?,
         )? {
             Err(ErrorCause::Hole)?;
         }
@@ -345,15 +343,15 @@ fn check_glue_elem_u(
         Err(ErrorCause::Hole)?
     }
 
-    for (alpha, (ve, u)) in System::intersect(&system1, &system2) {
-        let face_ctx = ctx.with_face(&alpha)?;
+    for (alpha, (ve, u)) in System::intersect(system1, system2) {
+        let face_ctx = ctx.with_face(alpha)?;
         check(&face_ctx, u, &app_formula(ctx, ve, Formula::Dir(Dir::One))?)?;
     }
 
     let vus = eval_system(ctx, system2)?;
 
-    for (alpha, (ve, v_alpha)) in System::intersect(&system1, &vus) {
-        if !Equiv::equiv(ctx, &eq_fun(ctx, ve, v_alpha)?, &term.face(ctx, &alpha)?)? {
+    for (alpha, (ve, v_alpha)) in System::intersect(system1, &vus) {
+        if !Equiv::equiv(ctx, &eq_fun(ctx, ve, v_alpha)?, &term.face(ctx, alpha)?)? {
             Err(ErrorCause::Hole)?;
         }
     }
@@ -379,7 +377,7 @@ pub fn check(ctx: &TypeContext, term: &Rc<Term>, tpe: &Rc<Term>) -> Result<(), T
                 };
                 let tpe = eval(&arg_ctx, tpe)?;
                 check(&arg_ctx, arg, &tpe)?;
-                arg_ctx = arg_ctx.with_term(&name, &arg, &tpe);
+                arg_ctx = arg_ctx.with_term(name, arg, &tpe);
                 con_type = body.clone();
             }
             Ok(())
@@ -409,7 +407,7 @@ pub fn check(ctx: &TypeContext, term: &Rc<Term>, tpe: &Rc<Term>) -> Result<(), T
                         }
                         let tele_ctx = check_tele(ctx, tele)?;
                         let inter_ctx = is.iter().fold(tele_ctx, |acc, i| {
-                            acc.with_formula(i, Formula::Atom(i.clone()))
+                            acc.with_formula(i, Formula::Atom(*i))
                         });
                         for (face, term) in ts.iter() {
                             let face_ctx = inter_ctx.with_face(face)?;
@@ -456,8 +454,8 @@ pub fn check(ctx: &TypeContext, term: &Rc<Term>, tpe: &Rc<Term>) -> Result<(), T
                 Err(ErrorCause::Hole)?;
             }
             let new_ctx = ctx
-                .with_term(&name, &Term::var(x.clone(), Mod::Precise), &tpe)
-                .with_term(x, &Term::var(x.clone(), Mod::Precise), &tpe);
+                .with_term(name, &Term::var(*x, Mod::Precise), &tpe)
+                .with_term(x, &Term::var(*x, Mod::Precise), &tpe);
             let new_result = eval(&new_ctx, body)?;
             check(&new_ctx, t, &new_result)
         }
@@ -480,7 +478,7 @@ pub fn check(ctx: &TypeContext, term: &Rc<Term>, tpe: &Rc<Term>) -> Result<(), T
             check(ctx, e1, &a1)
         }
         (Term::PathP(p, a0, a1, _), Term::PLam(name, _, _)) => {
-            let name = name.clone();
+            let name = *name;
 
             let (u0, u1) = check_plam(ctx, term, p)?;
 
@@ -517,8 +515,8 @@ pub fn check(ctx: &TypeContext, term: &Rc<Term>, tpe: &Rc<Term>) -> Result<(), T
             )?;
             let vw = eval(ctx, w)?;
             for (face, term) in ts.iter() {
-                let face_ctx = ctx.with_face(&face)?;
-                check(&face_ctx, term, &va.face(ctx, &face)?)?;
+                let face_ctx = ctx.with_face(face)?;
+                check(&face_ctx, term, &va.face(ctx, face)?)?;
                 let vt_alpha = eval(&face_ctx, term)?;
                 if Equiv::equiv(ctx, &vw.face(ctx, face)?, &const_path(&vt_alpha))? {
                     Err(ErrorCause::Hole)?
@@ -532,7 +530,7 @@ pub fn check(ctx: &TypeContext, term: &Rc<Term>, tpe: &Rc<Term>) -> Result<(), T
         _ => {
             let term_tpe = infer(ctx, term)?;
 
-            if Equiv::equiv(ctx, &term_tpe, &tpe)? {
+            if Equiv::equiv(ctx, &term_tpe, tpe)? {
                 Ok(())
             } else {
                 Err(ErrorCause::Hole)?

@@ -17,16 +17,16 @@ pub fn eval(ctx: &TypeContext, term: &Rc<Term>) -> Result<Rc<Term>, TypeError> {
         Term::App(fun, arg, _) => app(ctx, &eval(ctx, fun)?, &eval(ctx, arg)?),
         Term::Var(name, _) => Ok(ctx
             .lookup_term(name)
-            .ok_or(ErrorCause::UnknownTermName(name.clone()))?
+            .ok_or(ErrorCause::UnknownTermName(*name))?
             .value),
         Term::Pi(lam, pi_m) => {
             let Term::Lam(name, tpe, body, lam_m) = lam.as_ref() else {
                 Err(ErrorCause::Hole)?
             };
             let tpe = eval(ctx, tpe)?;
-            let body_ctx = ctx.with_term(name, &Term::var(name.clone(), Mod::Precise), &tpe);
+            let body_ctx = ctx.with_term(name, &Term::var(*name, Mod::Precise), &tpe);
             Ok(Term::pi(
-                &Term::lam(name.clone(), &tpe, &eval(&body_ctx, body)?, lam_m.clone()),
+                &Term::lam(*name, &tpe, &eval(&body_ctx, body)?, lam_m.clone()),
                 pi_m.clone(),
             ))
         }
@@ -34,10 +34,10 @@ pub fn eval(ctx: &TypeContext, term: &Rc<Term>) -> Result<Rc<Term>, TypeError> {
             let Term::Lam(name, tpe, body, lam_m) = lam.as_ref() else {
                 Err(ErrorCause::Hole)?
             };
-            let body_ctx = ctx.with_term(name, &Term::var(name.clone(), Mod::Precise), tpe);
+            let body_ctx = ctx.with_term(name, &Term::var(*name, Mod::Precise), tpe);
             Ok(Term::sigma(
                 &Term::lam(
-                    name.clone(),
+                    *name,
                     &eval(ctx, tpe)?,
                     &eval(&body_ctx, body)?,
                     lam_m.clone(),
@@ -53,7 +53,7 @@ pub fn eval(ctx: &TypeContext, term: &Rc<Term>) -> Result<Rc<Term>, TypeError> {
             eval(&new_ctx, body)
         }
         Term::Con(name, fields, m) => Ok(Term::con(
-            name.clone(),
+            *name,
             fields
                 .iter()
                 .map(|f| eval(ctx, f))
@@ -73,16 +73,16 @@ pub fn eval(ctx: &TypeContext, term: &Rc<Term>) -> Result<Rc<Term>, TypeError> {
         ),
         Term::Lam(name, tpe, body, m) => {
             let tpe = eval(ctx, tpe)?;
-            let lam_ctx = ctx.with_term(name, &Term::var(name.clone(), Mod::Precise), &tpe);
+            let lam_ctx = ctx.with_term(name, &Term::var(*name, Mod::Precise), &tpe);
             Ok(Term::lam(
-                name.clone(),
+                *name,
                 &eval(ctx, &tpe)?,
                 &eval(&lam_ctx, body)?,
                 m.clone(),
             ))
         }
         Term::Split(name, exp, bs, m) => {
-            let split_tpe = eval(&ctx, exp)?;
+            let split_tpe = eval(ctx, exp)?;
             let Term::Pi(lam, _) = split_tpe.as_ref() else {
                 Err(ErrorCause::Hole)?
             };
@@ -103,11 +103,11 @@ pub fn eval(ctx: &TypeContext, term: &Rc<Term>) -> Result<Rc<Term>, TypeError> {
                         let branch_ctx = ps.iter().zip(label.telescope().variables).fold(
                             ctx.clone(),
                             |acc, (name, (_, tpe))| {
-                                acc.with_term(name, &Term::var(name.clone(), Mod::Precise), &tpe)
+                                acc.with_term(name, &Term::var(*name, Mod::Precise), &tpe)
                             },
                         );
                         Ok(Branch::OBranch(
-                            name.clone(),
+                            *name,
                             ps.clone(),
                             eval(&branch_ctx, body)?,
                         ))
@@ -118,14 +118,14 @@ pub fn eval(ctx: &TypeContext, term: &Rc<Term>) -> Result<Rc<Term>, TypeError> {
                         let branch_ctx = ps.iter().zip(label.telescope().variables).fold(
                             ctx.clone(),
                             |acc, (name, (_, tpe))| {
-                                acc.with_term(name, &Term::var(name.clone(), Mod::Precise), &tpe)
+                                acc.with_term(name, &Term::var(*name, Mod::Precise), &tpe)
                             },
                         );
                         let branch_ctx = is.iter().fold(branch_ctx, |acc, name| {
-                            acc.with_formula(name, Formula::Atom(name.clone()))
+                            acc.with_formula(name, Formula::Atom(*name))
                         });
                         Ok(Branch::PBranch(
-                            name.clone(),
+                            *name,
                             ps.clone(),
                             is.clone(),
                             eval(&branch_ctx, body)?,
@@ -133,10 +133,10 @@ pub fn eval(ctx: &TypeContext, term: &Rc<Term>) -> Result<Rc<Term>, TypeError> {
                     }
                 })
                 .collect::<Result<_, TypeError>>()?;
-            Ok(Term::split(name.clone(), &eval(&ctx, exp)?, bs, m.clone()))
+            Ok(Term::split(*name, &eval(ctx, exp)?, bs, m.clone()))
         }
-        Term::Sum(name, labels, m) => Ok(Term::sum(name.clone(), labels.clone(), m.clone())),
-        Term::HSum(name, labels, m) => Ok(Term::hsum(name.clone(), labels.clone(), m.clone())),
+        Term::Sum(name, labels, m) => Ok(Term::sum(*name, labels.clone(), m.clone())),
+        Term::HSum(name, labels, m) => Ok(Term::hsum(*name, labels.clone(), m.clone())),
         Term::Undef(tpe, m) => Ok(Term::undef(tpe, m.clone())),
         Term::Hole => Ok(Term::hole()),
         Term::PathP(a, e0, e1, m) => Ok(Term::pathp(
@@ -146,8 +146,8 @@ pub fn eval(ctx: &TypeContext, term: &Rc<Term>) -> Result<Rc<Term>, TypeError> {
             m.clone(),
         )),
         Term::PLam(i, t, m) => {
-            let plam_ctx = ctx.with_formula(i, Formula::Atom(i.clone()));
-            Ok(Term::plam(i.clone(), &eval(&plam_ctx, t)?, m.clone()))
+            let plam_ctx = ctx.with_formula(i, Formula::Atom(*i));
+            Ok(Term::plam(*i, &eval(&plam_ctx, t)?, m.clone()))
         }
         Term::AppFormula(e, phi, _) => app_formula(ctx, &eval(ctx, e)?, eval_formula(ctx, phi)),
         Term::Comp(a, t0, ts, _) => {
@@ -183,7 +183,7 @@ pub fn eval(ctx: &TypeContext, term: &Rc<Term>) -> Result<Rc<Term>, TypeError> {
             m.clone(),
         )),
         Term::IdJ(a, t, c, d, x, p, m) => idj(
-            &ctx,
+            ctx,
             &eval(ctx, a)?,
             &eval(ctx, t)?,
             &eval(ctx, c)?,
@@ -259,14 +259,14 @@ pub fn eval_formula(ctx: &TypeContext, formula: &Formula) -> Formula {
             if let Some(form) = ctx.lookup_formula(name) {
                 form
             } else {
-                Formula::Atom(name.clone())
+                Formula::Atom(*name)
             }
         }
         Formula::NegAtom(name) => {
             if let Some(form) = ctx.lookup_formula(name) {
                 form.negate()
             } else {
-                Formula::NegAtom(name.clone())
+                Formula::NegAtom(*name)
             }
         }
         Formula::And(lhs, rhs) => {
@@ -287,7 +287,7 @@ pub fn eval_system(ctx: &TypeContext, system: &System<Term>) -> Result<System<Te
     for (alpha, t_alpha) in system.iter() {
         let mut betas: Vec<Face> = vec![Face::eps()];
         for (i, d) in alpha.binds.iter() {
-            let i_value = ctx.lookup_formula(&i).unwrap_or(Formula::Atom(i.clone()));
+            let i_value = ctx.lookup_formula(i).unwrap_or(Formula::Atom(*i));
             let faces = inv_formula(i_value, d.clone());
             let mut new_betas = vec![];
             for face in faces {
@@ -301,7 +301,7 @@ pub fn eval_system(ctx: &TypeContext, system: &System<Term>) -> Result<System<Te
         }
         for beta in betas {
             let new_ctx = ctx.with_face(&beta)?;
-            let e = eval(&new_ctx, &t_alpha)?;
+            let e = eval(&new_ctx, t_alpha)?;
             hm.insert(beta, e);
         }
     }
@@ -339,7 +339,7 @@ pub fn inv_formula(formula: Formula, dir: Dir) -> Vec<Face> {
                     for l in &lhs {
                         for r in &rhs {
                             if l.compatible(r) {
-                                res.push(l.meet(&r));
+                                res.push(l.meet(r));
                             }
                         }
                     }
@@ -431,10 +431,10 @@ pub fn pcon(
             if let Some(result) = vs.get(&Face::eps()) {
                 Ok(result.clone())
             } else {
-                Ok(Term::pcon(c.clone(), a, us, phis, m))
+                Ok(Term::pcon(*c, a, us, phis, m))
             }
         }
-        _ => Ok(Term::pcon(c.clone(), a, us, phis, m)),
+        _ => Ok(Term::pcon(*c, a, us, phis, m)),
     }
 }
 

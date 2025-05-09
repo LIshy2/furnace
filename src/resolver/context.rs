@@ -42,6 +42,12 @@ pub struct ResolveContext {
     counter: Rc<RefCell<Generator>>,
 }
 
+impl Default for ResolveContext {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ResolveContext {
     pub fn new() -> ResolveContext {
         ResolveContext {
@@ -112,8 +118,8 @@ impl ResolveContext {
     pub fn resolve_var(&self, ident: &str) -> Result<term::Term<()>, ResolveError> {
         if let Some((kind, id)) = self.binds.get(ident) {
             match kind {
-                SymbolKind::Variable => Ok(term::Term::Var(id.clone(), ())),
-                SymbolKind::Constructor => Ok(term::Term::Con(id.clone(), vec![], ())),
+                SymbolKind::Variable => Ok(term::Term::Var(*id, ())),
+                SymbolKind::Constructor => Ok(term::Term::Con(*id, vec![], ())),
                 SymbolKind::PConstructor | SymbolKind::Name => {
                     Err(UnresolvedVar(ident.to_string()))
                 }
@@ -126,8 +132,8 @@ impl ResolveContext {
     pub fn resolve_identifier(&self, ident: &str) -> Result<term::Identifier, ResolveError> {
         if let Some((kind, id)) = self.binds.get(ident) {
             match kind {
-                SymbolKind::Variable => Ok(id.clone()),
-                SymbolKind::Constructor | SymbolKind::PConstructor => Ok(id.clone()),
+                SymbolKind::Variable => Ok(*id),
+                SymbolKind::Constructor | SymbolKind::PConstructor => Ok(*id),
                 SymbolKind::Name => Err(UnresolvedVar(ident.to_string())),
             }
         } else {
@@ -137,7 +143,7 @@ impl ResolveContext {
 
     pub fn resolve_name(&self, ident: &str) -> Result<term::Identifier, ResolveError> {
         if let Some((SymbolKind::Name, id)) = self.binds.get(ident) {
-            Ok(id.clone())
+            Ok(*id)
         } else {
             Err(UnresolvedName(ident.to_string()))
         }

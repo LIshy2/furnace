@@ -10,7 +10,7 @@ mod tests {
     impl ModuleReader for ExampleModules {
         fn read_module(&self, name: &str) -> Module {
             let module_parser = parser::grammar::ModuleParser::new();
-            print!("Loading... examples/{}.fctt\n", name);
+            println!("Loading... examples/{}.fctt", name);
             let mut file = fs::File::open(format!("examples/{}.fctt", name)).unwrap();
             let mut content = String::new();
             file.read_to_string(&mut content).unwrap();

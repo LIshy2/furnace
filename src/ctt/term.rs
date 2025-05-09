@@ -1,4 +1,4 @@
-use std::collections::hash_map::{IntoIter, Iter};
+use std::collections::hash_map::IntoIter;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::ops::Index;
@@ -42,8 +42,8 @@ pub enum Label<T> {
 impl<T: Clone> Label<T> {
     pub fn name(&self) -> Identifier {
         match self {
-            Label::OLabel(name, _) => name.clone(),
-            Label::PLabel(name, _, _, _) => name.clone(),
+            Label::OLabel(name, _) => *name,
+            Label::PLabel(name, _, _, _) => *name,
         }
     }
 
@@ -64,8 +64,8 @@ pub enum Branch<T> {
 impl<T> Branch<T> {
     pub fn name(&self) -> Identifier {
         match self {
-            Branch::OBranch(name, _, _) => name.clone(),
-            Branch::PBranch(name, _, _, _) => name.clone(),
+            Branch::OBranch(name, _, _) => *name,
+            Branch::PBranch(name, _, _, _) => *name,
         }
     }
 }
@@ -118,8 +118,8 @@ impl Formula {
     pub fn negate(&self) -> Formula {
         match self {
             Formula::Dir(d) => Formula::Dir(d.negate()),
-            Formula::Atom(name) => Formula::NegAtom(name.clone()),
-            Formula::NegAtom(name) => Formula::Atom(name.clone()),
+            Formula::Atom(name) => Formula::NegAtom(*name),
+            Formula::NegAtom(name) => Formula::Atom(*name),
             Formula::And(lhs, rhs) => Formula::Or(Box::new(lhs.negate()), Box::new(rhs.negate())),
             Formula::Or(lhs, rhs) => Formula::And(Box::new(lhs.negate()), Box::new(rhs.negate())),
         }
@@ -134,7 +134,7 @@ pub struct Face {
 impl Face {
     pub fn cond(name: &Identifier, dir: Dir) -> Face {
         Face {
-            binds: HashMap::from([(name.clone(), dir)]),
+            binds: HashMap::from([(*name, dir)]),
         }
     }
 
@@ -145,7 +145,7 @@ impl Face {
     }
 
     pub fn domain(&self) -> Vec<Identifier> {
-        self.binds.keys().map(|c| c.clone()).collect()
+        self.binds.keys().copied().collect()
     }
 
     pub fn compatible(&self, other: &Face) -> bool {
@@ -173,11 +173,11 @@ impl Face {
                     panic!("faces incompatible")
                 }
             }
-            result.binds.insert(i.clone(), d1.clone());
+            result.binds.insert(*i, d1.clone());
         }
         for (i, d2) in &other.binds {
             if !self.binds.contains_key(i) {
-                result.binds.insert(i.clone(), d2.clone());
+                result.binds.insert(*i, d2.clone());
             }
         }
 
@@ -186,7 +186,7 @@ impl Face {
 
     pub fn minus(&self, other: &Face) -> Face {
         let mut result = self.clone();
-        for (k, _) in &other.binds {
+        for k in other.binds.keys() {
             result.binds.remove(k);
         }
         result
@@ -235,7 +235,7 @@ impl<A: Clone> System<A> {
         self.binds.contains_key(face)
     }
 
-    pub fn iter<'a>(&'a self) -> impl Iterator<Item = (&'a Face, &'a Rc<A>)> {
+    pub fn iter(&self) -> impl Iterator<Item = (&Face, &Rc<A>)> {
         self.binds.iter()
     }
 
@@ -243,7 +243,7 @@ impl<A: Clone> System<A> {
         self.binds.into_iter()
     }
 
-    pub fn values<'a>(&'a self) -> impl Iterator<Item = (&'a Rc<A>)> {
+    pub fn values(&self) -> impl Iterator<Item = &Rc<A>> {
         self.binds.values()
     }
 

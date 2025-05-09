@@ -180,13 +180,13 @@ impl Nominal for Rc<Term> {
             Term::Lam(x, t, u, m) => {
                 let new_t = t.act(ctx, i, f.clone())?;
                 let in_body_ctx =
-                    ctx.with_term(x, &Rc::new(Term::Var(x.clone(), Mod::Precise)), &new_t);
+                    ctx.with_term(x, &Rc::new(Term::Var(*x, Mod::Precise)), &new_t);
                 let new_u = u.act(&in_body_ctx, i, f)?;
 
                 if Rc::ptr_eq(t, &new_t) && Rc::ptr_eq(u, &new_u) {
                     Ok(self.clone())
                 } else {
-                    Ok(Rc::new(Term::Lam(x.clone(), new_t, new_u, m.clone())))
+                    Ok(Rc::new(Term::Lam(*x, new_t, new_u, m.clone())))
                 }
             }
             Term::Sigma(t, m) => {
@@ -238,7 +238,7 @@ impl Nominal for Rc<Term> {
                 if !changed {
                     Ok(self.clone())
                 } else {
-                    Ok(Rc::new(Term::Con(c.clone(), new_a, m.clone())))
+                    Ok(Rc::new(Term::Con(*c, new_a, m.clone())))
                 }
             }
             Term::PCon(c, t, vs, phis, m) => {
@@ -279,7 +279,7 @@ impl Nominal for Rc<Term> {
                 if Rc::ptr_eq(t, &new_t) {
                     Ok(self.clone())
                 } else {
-                    Ok(Rc::new(Term::Split(c.clone(), new_t, b.clone(), m.clone())))
+                    Ok(Rc::new(Term::Split(*c, new_t, b.clone(), m.clone())))
                 }
             }
             Term::PathP(a, u, v, m) => {
@@ -298,14 +298,12 @@ impl Nominal for Rc<Term> {
                     Ok(self.clone())
                 } else {
                     let sphi = v.support();
-                    if !sphi.contains(j) {
-                    } else {
-                    }
+                    sphi.contains(j); 
                     let new_v = v.act(ctx, i, f)?;
                     if Rc::ptr_eq(v, &new_v) {
                         Ok(self.clone())
                     } else {
-                        Ok(Rc::new(Term::PLam(j.clone(), new_v, m.clone())))
+                        Ok(Rc::new(Term::PLam(*j, new_v, m.clone())))
                     }
                 }
             }
@@ -416,12 +414,12 @@ impl Nominal for Rc<Term> {
                 let new_x = x.act(ctx, i, f.clone())?;
                 let new_p = p.act(ctx, i, f.clone())?;
 
-                if Rc::ptr_eq(&a, &new_a)
-                    && Rc::ptr_eq(&u, &new_u)
-                    && Rc::ptr_eq(&c, &new_c)
-                    && Rc::ptr_eq(&d, &new_d)
-                    && Rc::ptr_eq(&x, &new_x)
-                    && Rc::ptr_eq(&p, &new_p)
+                if Rc::ptr_eq(a, &new_a)
+                    && Rc::ptr_eq(u, &new_u)
+                    && Rc::ptr_eq(c, &new_c)
+                    && Rc::ptr_eq(d, &new_d)
+                    && Rc::ptr_eq(x, &new_x)
+                    && Rc::ptr_eq(p, &new_p)
                 {
                     Ok(self.clone())
                 } else {
@@ -451,7 +449,7 @@ impl Nominal for Rc<Term> {
             Term::Pi(u, m) => Rc::new(Term::Pi(u.swap(from, to), m.clone())),
             Term::App(a, b, m) => Rc::new(Term::App(a.swap(from, to), b.swap(from, to), m.clone())),
             Term::Lam(x, t, u, m) => Rc::new(Term::Lam(
-                x.clone(),
+                *x,
                 t.swap(from, to),
                 u.swap(from, to),
                 m.clone(),
@@ -465,19 +463,19 @@ impl Nominal for Rc<Term> {
             Term::Fst(v, m) => Rc::new(Term::Fst(v.swap(from, to), m.clone())),
             Term::Snd(v, m) => Rc::new(Term::Snd(v.swap(from, to), m.clone())),
             Term::Con(c, a, m) => Rc::new(Term::Con(
-                c.clone(),
+                *c,
                 a.iter().map(|x| x.swap(from, to)).collect(),
                 m.clone(),
             )),
             Term::PCon(c, t, vs, phis, m) => Rc::new(Term::PCon(
-                c.clone(),
+                *c,
                 t.swap(from, to),
                 vs.iter().map(|x| x.swap(from, to)).collect(),
                 phis.iter().map(|x| x.swap(from, to)).collect(),
                 m.clone(),
             )),
             Term::Split(c, t, bs, m) => Rc::new(Term::Split(
-                c.clone(),
+                *c,
                 t.swap(from, to),
                 bs.clone(),
                 m.clone(),
@@ -497,8 +495,8 @@ impl Nominal for Rc<Term> {
                     j
                 };
                 Rc::new(Term::PLam(
-                    k.clone(),
-                    v.swap(j, &k).swap(from, to),
+                    *k,
+                    v.swap(j, k).swap(from, to),
                     m.clone(),
                 ))
             }
@@ -594,7 +592,7 @@ impl Nominal for System<Term> {
             } else {
                 result.insert(
                     alpha.clone(),
-                    u.act(ctx, i, phi.clone().face(ctx, &alpha)?)?,
+                    u.act(ctx, i, phi.clone().face(ctx, alpha)?)?,
                 );
             }
         }
@@ -616,7 +614,7 @@ impl Nominal for System<Term> {
                             } else {
                                 n
                             };
-                            (k.clone(), d.clone())
+                            (*k, d.clone())
                         })
                         .collect(),
                 };
@@ -631,8 +629,8 @@ impl Nominal for Formula {
         fn inner(f: &Formula, acc: &mut Vec<Identifier>) {
             match f {
                 Formula::Dir(_) => {}
-                Formula::Atom(i) => acc.push(i.clone()),
-                Formula::NegAtom(i) => acc.push(i.clone()),
+                Formula::Atom(i) => acc.push(*i),
+                Formula::NegAtom(i) => acc.push(*i),
                 Formula::And(l, r) => {
                     inner(l.as_ref(), acc);
                     inner(r.as_ref(), acc);
@@ -655,14 +653,14 @@ impl Nominal for Formula {
                 if i == j {
                     Ok(phi)
                 } else {
-                    Ok(Formula::Atom(j.clone()))
+                    Ok(Formula::Atom(*j))
                 }
             }
             Formula::NegAtom(j) => {
                 if i == j {
                     Ok(phi.negate())
                 } else {
-                    Ok(Formula::NegAtom(j.clone()))
+                    Ok(Formula::NegAtom(*j))
                 }
             }
             Formula::And(psi1, psi2) => Ok(psi1
@@ -687,7 +685,7 @@ impl Nominal for Formula {
                 } else {
                     j
                 };
-                Formula::Atom(k.clone())
+                Formula::Atom(*k)
             }
             Formula::NegAtom(j) => {
                 let k = if j == from {
@@ -697,7 +695,7 @@ impl Nominal for Formula {
                 } else {
                     j
                 };
-                Formula::NegAtom(k.clone())
+                Formula::NegAtom(*k)
             }
             Formula::And(psi1, psi2) => psi1
                 .as_ref()
@@ -733,8 +731,8 @@ pub fn conj<A: Nominal>(
         ctx,
         i,
         Formula::And(
-            Box::new(Formula::Atom(i.clone())),
-            Box::new(Formula::Atom(j.clone())),
+            Box::new(Formula::Atom(*i)),
+            Box::new(Formula::Atom(*j)),
         ),
     )
 }
@@ -749,14 +747,14 @@ pub fn disj<A: Nominal>(
         ctx,
         i,
         Formula::Or(
-            Box::new(Formula::Atom(i.clone())),
-            Box::new(Formula::Atom(j.clone())),
+            Box::new(Formula::Atom(*i)),
+            Box::new(Formula::Atom(*j)),
         ),
     )
 }
 
 pub fn sym<A: Nominal>(ctx: &TypeContext, a: &A, i: &Identifier) -> Result<A, TypeError> {
-    a.act(ctx, i, Formula::NegAtom(i.clone()))
+    a.act(ctx, i, Formula::NegAtom(*i))
 }
 
 pub fn border<A, B: Clone>(
@@ -767,8 +765,8 @@ pub fn border<A, B: Clone>(
 where
     Rc<A>: Facing,
 {
-    Ok(shape
+    shape
         .iter()
         .map(|(f, _)| Ok((f.clone(), value.face(ctx, f)?)))
-        .collect::<Result<_, TypeError>>()?)
+        .collect::<Result<_, TypeError>>()
 }

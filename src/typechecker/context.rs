@@ -1,6 +1,6 @@
 use crate::ctt::term::{DeclarationSet, Face, Formula, Identifier, Label};
 use crate::precise::term::Term;
-use crate::typechecker::canon::eval::{eval, eval_system};
+use crate::typechecker::canon::eval::eval;
 use crate::typechecker::canon::heat::PathIndex;
 use crate::typechecker::error::TypeError;
 use rpds::HashTrieMap;
@@ -35,14 +35,14 @@ impl Debug for TypeContext {
             e.value.fmt(f)?;
             write!(f, ": ")?;
             e.tpe.fmt(f)?;
-            write!(f, "\n")?;
+            writeln!(f)?;
         }
-        write!(f, "INTERVALS\n")?;
+        writeln!(f, "INTERVALS")?;
         for (name, e) in self.formula_binds.iter() {
             name.fmt(f)?;
             write!(f, " - ")?;
             e.fmt(f)?;
-            write!(f, "\n")?;
+            writeln!(f)?;
         }
         Ok(())
     }
@@ -68,7 +68,7 @@ impl TypeContext {
     }
 
     pub fn lookup_term(&self, name: &Identifier) -> Option<Entry> {
-        let e = self.term_binds.get(name).map(|x| x.clone())?;
+        let e = self.term_binds.get(name).cloned()?;
         let new_entry = Entry {
             tpe: e.tpe.face(self, &self.face).unwrap(),
             value: e.value.face(self, &self.face).unwrap(),
@@ -77,30 +77,22 @@ impl TypeContext {
     }
 
     pub fn lookup_formula(&self, name: &Identifier) -> Option<Formula> {
-        let f = self.formula_binds.get(name).map(|x| x.clone())?;
+        let f = self.formula_binds.get(name).cloned()?;
         Some(f.face(self, &self.face).unwrap())
     }
 
     fn analyze_hsum(&self, hsum: &Rc<Term>) {
-        match hsum.as_ref() {
-            Term::HSum(_, labels, ..) => {
-                for label in labels {
-                    match label {
-                        Label::PLabel(_, _, is, sys) => {
-                            if is.len() == 1 {
-                                if sys.len() == 2 {
-                                    let endpoints = sys.values().collect::<Vec<_>>();
-                                    self.path_index
-                                        .borrow_mut()
-                                        .add(&endpoints[0], &endpoints[1]);
-                                }
-                            }
-                        }
-                        _ => {}
+        if let Term::HSum(_, labels, ..) = hsum.as_ref() {
+            for label in labels {
+                if let Label::PLabel(_, _, is, sys) = label {
+                    if is.len() == 1 && sys.len() == 2 {
+                        let endpoints = sys.values().collect::<Vec<_>>();
+                        self.path_index
+                            .borrow_mut()
+                            .add(endpoints[0], endpoints[1]);
                     }
                 }
             }
-            _ => (),
         }
     }
 
@@ -108,7 +100,7 @@ impl TypeContext {
         self.analyze_hsum(value);
         TypeContext {
             term_binds: self.term_binds.insert(
-                name.clone(),
+                *name,
                 Entry {
                     value: value.clone(),
                     tpe: tpe.clone(),
@@ -146,7 +138,7 @@ impl TypeContext {
     pub fn with_formula(&self, name: &Identifier, formula: Formula) -> TypeContext {
         TypeContext {
             term_binds: self.term_binds.clone(),
-            formula_binds: self.formula_binds.insert(name.clone(), formula),
+            formula_binds: self.formula_binds.insert(*name, formula),
             counter: self.counter.clone(),
             face: self.face.clone(),
             path_index: self.path_index.clone(),
@@ -157,17 +149,14 @@ impl TypeContext {
 
     pub fn with_decl_set(&self, decls: &DeclarationSet<Term>) -> Result<TypeContext, TypeError> {
         let mut new_ctx = self.clone();
-        match decls {
-            DeclarationSet::Mutual(decls) => {
-                for decl in decls {
-                    new_ctx = new_ctx.with_term(
-                        &decl.name,
-                        &eval(&new_ctx, &decl.body)?,
-                        &eval(&new_ctx, &decl.tpe)?,
-                    );
-                }
+        if let DeclarationSet::Mutual(decls) = decls {
+            for decl in decls {
+                new_ctx = new_ctx.with_term(
+                    &decl.name,
+                    &eval(&new_ctx, &decl.body)?,
+                    &eval(&new_ctx, &decl.tpe)?,
+                );
             }
-            _ => (),
         }
         Ok(new_ctx)
     }

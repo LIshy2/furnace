@@ -115,7 +115,7 @@ fn analyze(ctx: &mut Constraints, t: &Rc<CttTerm<()>>) -> Rc<PreTerm> {
             let bod_t = analyze(ctx, b);
             let bod_type = bod_t.tpe();
             Rc::new(PreTerm::Lam(
-                a.clone(),
+                *a,
                 arg_t,
                 bod_t,
                 SimpleType::Fun(Box::new(arg_type), Box::new(bod_type)),
@@ -124,7 +124,7 @@ fn analyze(ctx: &mut Constraints, t: &Rc<CttTerm<()>>) -> Rc<PreTerm> {
         CttTerm::Where(_, _, _) => {
             todo!()
         }
-        CttTerm::Var(n, _) => Rc::new(PreTerm::Var(n.clone(), ctx.get(n))),
+        CttTerm::Var(n, _) => Rc::new(PreTerm::Var(*n, ctx.get(n))),
         CttTerm::U => Rc::new(PreTerm::U),
         CttTerm::Sigma(si, _) => {
             let inner = analyze(ctx, si);
@@ -150,7 +150,7 @@ fn analyze(ctx: &mut Constraints, t: &Rc<CttTerm<()>>) -> Rc<PreTerm> {
             for f in &fs {
                 ctx.unify(&f.tpe(), &fresh);
             }
-            Rc::new(PreTerm::Con(n.clone(), fs, fresh))
+            Rc::new(PreTerm::Con(*n, fs, fresh))
         }
         CttTerm::PCon(n, t, fs, i, _) => {
             let fs = fs.iter().map(|f| analyze(ctx, f)).collect::<Vec<_>>();
@@ -160,7 +160,7 @@ fn analyze(ctx: &mut Constraints, t: &Rc<CttTerm<()>>) -> Rc<PreTerm> {
             }
 
             Rc::new(PreTerm::PCon(
-                n.clone(),
+                *n,
                 analyze(ctx, t),
                 fs,
                 i.clone(),
@@ -179,7 +179,7 @@ fn analyze(ctx: &mut Constraints, t: &Rc<CttTerm<()>>) -> Rc<PreTerm> {
                             ctx.add(a, f.clone());
                             tpe_vars.push(f);
                         }
-                        Branch::OBranch(n.clone(), ars.clone(), analyze(ctx, t))
+                        Branch::OBranch(*n, ars.clone(), analyze(ctx, t))
                     }
                     Branch::PBranch(n, ars, is, t) => {
                         // todo add >=
@@ -188,7 +188,7 @@ fn analyze(ctx: &mut Constraints, t: &Rc<CttTerm<()>>) -> Rc<PreTerm> {
                             ctx.add(a, f.clone());
                             tpe_vars.push(f);
                         }
-                        Branch::PBranch(n.clone(), ars.clone(), is.clone(), analyze(ctx, t))
+                        Branch::PBranch(*n, ars.clone(), is.clone(), analyze(ctx, t))
                     }
                 })
                 .collect::<Vec<_>>();
@@ -201,7 +201,7 @@ fn analyze(ctx: &mut Constraints, t: &Rc<CttTerm<()>>) -> Rc<PreTerm> {
             }
 
             Rc::new(PreTerm::Split(
-                n.clone(),
+                *n,
                 analyze(ctx, t),
                 b,
                 SimpleType::Fun(Box::new(o.clone()), Box::new(o)),
@@ -211,30 +211,30 @@ fn analyze(ctx: &mut Constraints, t: &Rc<CttTerm<()>>) -> Rc<PreTerm> {
             let ls = ls
                 .iter()
                 .map(|l| match l {
-                    Label::OLabel(n, t) => Label::OLabel(n.clone(), analyze_tele(ctx, t)),
+                    Label::OLabel(n, t) => Label::OLabel(*n, analyze_tele(ctx, t)),
                     Label::PLabel(n, t, is, s) => panic!("h-label in sum"),
                 })
                 .collect();
             let f = ctx.fresh();
-            Rc::new(PreTerm::Sum(n.clone(), ls, f))
+            Rc::new(PreTerm::Sum(*n, ls, f))
         }
         CttTerm::HSum(n, ls, _) => {
             let ls = ls
                 .iter()
                 .map(|l| match l {
-                    Label::OLabel(n, t) => Label::OLabel(n.clone(), analyze_tele(ctx, t)),
+                    Label::OLabel(n, t) => Label::OLabel(*n, analyze_tele(ctx, t)),
                     Label::PLabel(n, t, is, s) => {
                         let s = analyze_system(ctx, s);
                         for (_, t) in s.iter() {
                             ctx.unify(&t.tpe(), &SimpleType::Strict);
                         }
-                        Label::PLabel(n.clone(), analyze_tele(ctx, t), is.clone(), s)
+                        Label::PLabel(*n, analyze_tele(ctx, t), is.clone(), s)
                     }
                 })
                 .collect();
 
             let f = ctx.fresh();
-            Rc::new(PreTerm::HSum(n.clone(), ls, f))
+            Rc::new(PreTerm::HSum(*n, ls, f))
         }
         CttTerm::Undef(tpe, _) => {
             let f = ctx.fresh();
@@ -256,7 +256,7 @@ fn analyze(ctx: &mut Constraints, t: &Rc<CttTerm<()>>) -> Rc<PreTerm> {
             let inner = analyze(ctx, p);
             let t = inner.tpe();
             ctx.unify(&t, &SimpleType::Strict);
-            Rc::new(PreTerm::PLam(i.clone(), inner, t))
+            Rc::new(PreTerm::PLam(*i, inner, t))
         }
         CttTerm::AppFormula(f, a, _) => {
             let inner = analyze(ctx, f);
@@ -292,7 +292,7 @@ fn analyze_tele(ctx: &mut Constraints, t: &Telescope<CttTerm<()>>) -> Telescope<
         variables: t
             .variables
             .iter()
-            .map(|(n, t)| (n.clone(), analyze(ctx, t)))
+            .map(|(n, t)| (*n, analyze(ctx, t)))
             .collect(),
     }
 }
@@ -319,15 +319,15 @@ pub fn analyze_all(
                         let t = analyze(ctx, &d.body);
                         ctx.unify(&t.tpe(), &f);
                         Declaration {
-                            name: d.name.clone(),
+                            name: d.name,
                             tpe: analyze(ctx, &d.tpe),
                             body: t,
                         }
                     })
                     .collect(),
             ),
-            DeclarationSet::Opaque(s) => DeclarationSet::Opaque(s.clone()),
-            DeclarationSet::Transparent(s) => DeclarationSet::Transparent(s.clone()),
+            DeclarationSet::Opaque(s) => DeclarationSet::Opaque(*s),
+            DeclarationSet::Transparent(s) => DeclarationSet::Transparent(*s),
             DeclarationSet::TransparentAll => DeclarationSet::TransparentAll,
         })
         .collect()
@@ -357,12 +357,12 @@ pub fn finalize_term(ctx: &mut Constraints, t: &Rc<PreTerm>) -> Rc<Term> {
             finalize_mod(ctx, t),
         )),
         PreTerm::Lam(n, a, b, t) => Rc::new(Term::Lam(
-            n.clone(),
+            *n,
             finalize_term(ctx, a),
             finalize_term(ctx, b),
             finalize_mod(ctx, t),
         )),
-        PreTerm::Var(n, t) => Rc::new(Term::Var(n.clone(), finalize_mod(ctx, t))),
+        PreTerm::Var(n, t) => Rc::new(Term::Var(*n, finalize_mod(ctx, t))),
         PreTerm::U => Rc::new(Term::U),
         PreTerm::Sigma(si, t) => Rc::new(Term::Sigma(finalize_term(ctx, si), finalize_mod(ctx, t))),
         PreTerm::Pair(f, s, t) => Rc::new(Term::Pair(
@@ -373,39 +373,39 @@ pub fn finalize_term(ctx: &mut Constraints, t: &Rc<PreTerm>) -> Rc<Term> {
         PreTerm::Fst(p, t) => Rc::new(Term::Fst(finalize_term(ctx, p), finalize_mod(ctx, t))),
         PreTerm::Snd(p, t) => Rc::new(Term::Snd(finalize_term(ctx, p), finalize_mod(ctx, t))),
         PreTerm::Con(n, f, t) => Rc::new(Term::Con(
-            n.clone(),
+            *n,
             f.iter().map(|f| finalize_term(ctx, f)).collect(),
             finalize_mod(ctx, t),
         )),
         PreTerm::PCon(n, tp, f, i, t) => Rc::new(Term::PCon(
-            n.clone(),
+            *n,
             finalize_term(ctx, tp),
             f.iter().map(|f| finalize_term(ctx, f)).collect(),
             i.clone(),
             finalize_mod(ctx, t),
         )),
         PreTerm::Split(n, tpe, bs, t) => Rc::new(Term::Split(
-            n.clone(),
+            *n,
             finalize_term(ctx, tpe),
             bs.iter()
                 .map(|b| match b {
                     Branch::OBranch(n, a, b) => {
-                        Branch::OBranch(n.clone(), a.clone(), finalize_term(ctx, b))
+                        Branch::OBranch(*n, a.clone(), finalize_term(ctx, b))
                     }
                     Branch::PBranch(n, a, is, b) => {
-                        Branch::PBranch(n.clone(), a.clone(), is.clone(), finalize_term(ctx, b))
+                        Branch::PBranch(*n, a.clone(), is.clone(), finalize_term(ctx, b))
                     }
                 })
                 .collect(),
             finalize_mod(ctx, t),
         )),
         PreTerm::Sum(n, ls, t) => Rc::new(Term::Sum(
-            n.clone(),
+            *n,
             ls.iter()
                 .map(|l| match l {
-                    Label::OLabel(n, tele) => Label::OLabel(n.clone(), finalize_tele(ctx, tele)),
+                    Label::OLabel(n, tele) => Label::OLabel(*n, finalize_tele(ctx, tele)),
                     Label::PLabel(n, tele, is, sys) => Label::PLabel(
-                        n.clone(),
+                        *n,
                         finalize_tele(ctx, tele),
                         is.clone(),
                         finalize_system(ctx, sys),
@@ -415,12 +415,12 @@ pub fn finalize_term(ctx: &mut Constraints, t: &Rc<PreTerm>) -> Rc<Term> {
             finalize_mod(ctx, t),
         )),
         PreTerm::HSum(n, ls, t) => Rc::new(Term::HSum(
-            n.clone(),
+            *n,
             ls.iter()
                 .map(|l| match l {
-                    Label::OLabel(n, tele) => Label::OLabel(n.clone(), finalize_tele(ctx, tele)),
+                    Label::OLabel(n, tele) => Label::OLabel(*n, finalize_tele(ctx, tele)),
                     Label::PLabel(n, tele, is, sys) => Label::PLabel(
-                        n.clone(),
+                        *n,
                         finalize_tele(ctx, tele),
                         is.clone(),
                         finalize_system(ctx, sys),
@@ -440,7 +440,7 @@ pub fn finalize_term(ctx: &mut Constraints, t: &Rc<PreTerm>) -> Rc<Term> {
             finalize_mod(ctx, t),
         )),
         PreTerm::PLam(i, b, t) => Rc::new(Term::PLam(
-            i.clone(),
+            *i,
             finalize_term(ctx, b),
             finalize_mod(ctx, t),
         )),
@@ -497,7 +497,7 @@ pub fn finalize_tele(ctx: &mut Constraints, tele: &Telescope<PreTerm>) -> Telesc
         variables: tele
             .variables
             .iter()
-            .map(|(n, t)| (n.clone(), finalize_term(ctx, t)))
+            .map(|(n, t)| (*n, finalize_term(ctx, t)))
             .collect(),
     }
 }
@@ -513,14 +513,14 @@ pub fn finalize_all(
                 decls
                     .iter()
                     .map(|d| Declaration {
-                        name: d.name.clone(),
+                        name: d.name,
                         tpe: finalize_term(ctx, &d.tpe),
                         body: finalize_term(ctx, &d.body),
                     })
                     .collect(),
             ),
-            DeclarationSet::Opaque(s) => DeclarationSet::Opaque(s.clone()),
-            DeclarationSet::Transparent(s) => DeclarationSet::Transparent(s.clone()),
+            DeclarationSet::Opaque(s) => DeclarationSet::Opaque(*s),
+            DeclarationSet::Transparent(s) => DeclarationSet::Transparent(*s),
             DeclarationSet::TransparentAll => DeclarationSet::TransparentAll,
         })
         .collect()

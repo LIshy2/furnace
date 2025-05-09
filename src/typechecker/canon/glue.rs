@@ -1,6 +1,5 @@
 use crate::ctt::term::{Face, System};
 use crate::precise::term::{Mod, Term};
-use crate::typechecker::canon::nominal::Nominal;
 use crate::typechecker::context::TypeContext;
 use crate::typechecker::error::TypeError;
 use std::rc::Rc;

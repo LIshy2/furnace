@@ -67,13 +67,9 @@ impl FakeNotifier {
 }
 
 impl ProgressNotifier for FakeNotifier {
-    fn decl_check_started(&self, decl_name: &Identifier) {
-        ()
-    }
+    fn decl_check_started(&self, decl_name: &Identifier) {}
 
-    fn decl_check_finished(&self, decl_name: &Identifier) {
-        ()
-    }
+    fn decl_check_finished(&self, decl_name: &Identifier) {}
 }
 
 fn check_arith(compaction: bool) {
@@ -98,7 +94,7 @@ fn check_arith(compaction: bool) {
         let modules = mark_erased(&modules);
 
         for set in modules.iter() {
-            ctx = check_declaration_set(ctx, &set).unwrap();
+            ctx = check_declaration_set(&ctx, set).unwrap();
         }
     } else {
         panic!("file not found");

@@ -1,19 +1,18 @@
 use std::{collections::HashMap, iter, rc::Rc};
 
 use crate::{
-    ctt::term::{anon_id, Dir, Face, Formula, Identifier, Label, System},
+    ctt::term::{anon_id, Dir, Face, Formula, Identifier, System},
     precise::term::{Mod, Term},
     typechecker::{
         context::TypeContext,
         error::{ErrorCause, TypeError},
         infer::{const_path, infer},
     },
-    utils::intersect,
 };
 
 use super::{
     app::{app, app_formula},
-    eval::{equiv_contr, equiv_dom, equiv_fun, eval, eval_system, get_first, get_second, pcon},
+    eval::{equiv_contr, equiv_dom, equiv_fun, eval, get_first, get_second, pcon},
     glue::{glue_elem, unglue, unglue_u},
     nominal::{conj, disj, sym, Facing},
 };
@@ -25,18 +24,18 @@ pub fn fill_line(
     ts: &System<Term>,
 ) -> Result<Rc<Term>, TypeError> {
     let i = ctx.fresh();
-    let ctx = ctx.with_formula(&i, Formula::Atom(i.clone()));
+    let ctx = ctx.with_formula(&i, Formula::Atom(i));
 
     let new_system = ts
         .iter()
-        .map(|(f, v)| Ok((f.clone(), app_formula(&ctx, &v, Formula::Atom(i.clone()))?)))
+        .map(|(f, v)| Ok((f.clone(), app_formula(&ctx, v, Formula::Atom(i))?)))
         .collect::<Result<_, TypeError>>()?;
     Ok(Term::plam(
-        i.clone(),
+        i,
         &fill(
-            &ctx.with_formula(&i, Formula::Atom(i.clone())),
+            &ctx.with_formula(&i, Formula::Atom(i)),
             &i,
-            &app_formula(&ctx, a, Formula::Atom(i.clone()))?,
+            &app_formula(&ctx, a, Formula::Atom(i))?,
             u,
             new_system,
         )?,
@@ -52,7 +51,7 @@ pub fn fill(
     ts: System<Term>,
 ) -> Result<Rc<Term>, TypeError> {
     let j = ctx.fresh();
-    let ctx = ctx.with_formula(&j, Formula::Atom(j.clone()));
+    let ctx = ctx.with_formula(&j, Formula::Atom(j));
     comp(
         &ctx,
         &j,
@@ -73,13 +72,13 @@ pub fn comp_line(
     let ctx = ctx.with_formula(&i, Formula::Atom(i));
     let new_system = ts
         .iter()
-        .map(|(f, v)| Ok((f.clone(), app_formula(&ctx, v, Formula::Atom(i.clone()))?)))
+        .map(|(f, v)| Ok((f.clone(), app_formula(&ctx, v, Formula::Atom(i))?)))
         .collect::<Result<_, TypeError>>()?;
     comp(
         &ctx,
         &i,
-        &app_formula(&ctx, &a, Formula::Atom(i.clone()))?,
-        &u,
+        &app_formula(&ctx, a, Formula::Atom(i))?,
+        u,
         &new_system,
     )
 }
@@ -135,7 +134,7 @@ pub fn trans_neg(
 
 fn trans_neg_line(ctx: &TypeContext, u: &Rc<Term>, v: &Rc<Term>) -> Result<Rc<Term>, TypeError> {
     let i = ctx.fresh();
-    trans_neg(ctx, &i, &app_formula(ctx, u, Formula::Atom(i.clone()))?, v)
+    trans_neg(ctx, &i, &app_formula(ctx, u, Formula::Atom(i))?, v)
 }
 
 pub fn comp(
@@ -154,17 +153,17 @@ pub fn comp(
             let ctx = ctx.with_formula(&j, Formula::Atom(j));
             let system = ts
                 .iter()
-                .map(|(k, v)| Ok((k.clone(), app_formula(&ctx, v, Formula::Atom(j.clone()))?)))
+                .map(|(k, v)| Ok((k.clone(), app_formula(&ctx, v, Formula::Atom(j))?)))
                 .collect::<Result<System<_>, TypeError>>()?
                 .insert(Face::cond(&j, Dir::Zero), v0.clone())
                 .insert(Face::cond(&j, Dir::One), v1.clone());
             Ok(Term::plam(
-                j.clone(),
+                j,
                 &comp(
                     &ctx,
                     i,
-                    &app_formula(&ctx, p, Formula::Atom(j.clone()))?,
-                    &app_formula(&ctx, u, Formula::Atom(j.clone()))?,
+                    &app_formula(&ctx, p, Formula::Atom(j))?,
+                    &app_formula(&ctx, u, Formula::Atom(j))?,
                     &system,
                 )?,
                 Mod::Precise,
@@ -179,14 +178,14 @@ pub fn comp(
                     ts
                         .iter().map(|(k, v)| {
                             let Term::IdPair(z, _, _) = v.as_ref() else { Err(ErrorCause::Hole)? };
-                            Ok((k.clone(), app_formula(&ctx, z, Formula::Atom(j.clone()))?))
+                            Ok((k.clone(), app_formula(&ctx, z, Formula::Atom(j))?))
                         })
                         .collect::<Result<System<_>, TypeError>>()?
                     .insert(Face::cond(&j, Dir::Zero), v0.clone())
                     .insert(Face::cond(&j, Dir::One), v1.clone());
                 let w = Term::plam(
-                    j.clone(),
-                    &comp(&ctx, i, b, &app_formula(&ctx, r, Formula::Atom(j.clone()))?, &system)?,
+                    j,
+                    &comp(&ctx, i, b, &app_formula(&ctx, r, Formula::Atom(j))?, &system)?,
                     Mod::Precise
                 );
                 let sys = ts.face(&ctx, &Face::cond(i, Dir::One))?;
@@ -202,8 +201,8 @@ pub fn comp(
             _ => {
                 let system =
                     ts.iter().map(|(k, v)|
-                        (k.clone(), Term::plam(i.clone(), v, Mod::Precise))).collect();
-                Ok(Term::comp(&Term::plam(i.clone(), a, Mod::Precise), u, system, Mod::Precise))
+                        (k.clone(), Term::plam(*i, v, Mod::Precise))).collect();
+                Ok(Term::comp(&Term::plam(*i, a, Mod::Precise), u, system, Mod::Precise))
             }
         },
         Term::Sigma(f, _) => {
@@ -222,7 +221,7 @@ pub fn comp(
         Term::U => {
             let ts_ = ts
                 .iter()
-                .map(|(k, v)| (k.clone(), Term::plam(i.clone(), v, Mod::Precise)))
+                .map(|(k, v)| (k.clone(), Term::plam(*i, v, Mod::Precise)))
                 .collect();
             comp_univ(ctx, u, ts_)
         }
@@ -258,20 +257,20 @@ pub fn comp(
                     let (name, tpe) = &tele.variables[ind];
                     let et = eval(&new_ctx, tpe)?;
                     let v = fill(&new_ctx, i, &et, &ns[ind], system.clone())?;
-                    let vi1 = comp(&new_ctx, &i, &et, &ns[ind], &system)?;
+                    let vi1 = comp(&new_ctx, i, &et, &ns[ind], &system)?;
                     // TODO remove infer
                     new_ctx = new_ctx.with_term(name, &v, &infer(&new_ctx, &v)?);
                     vs.push(vi1);
                 }
-                Ok(Term::con(n.clone(), vs, Mod::Precise))
+                Ok(Term::con(*n, vs, Mod::Precise))
             }
             _ => {
                 let system = ts
                     .iter()
-                    .map(|(k, v)| (k.clone(), Term::plam(i.clone(), v, Mod::Precise)))
+                    .map(|(k, v)| (k.clone(), Term::plam(*i, v, Mod::Precise)))
                     .collect();
                 Ok(Term::comp(
-                    &Term::plam(i.clone(), a, Mod::Precise),
+                    &Term::plam(*i, a, Mod::Precise),
                     u,
                     system,
                     Mod::Precise,
@@ -284,10 +283,10 @@ pub fn comp(
         _ => {
             let system = ts
                 .iter()
-                .map(|(k, v)| (k.clone(), Term::plam(i.clone(), v, Mod::Precise)))
+                .map(|(k, v)| (k.clone(), Term::plam(*i, v, Mod::Precise)))
                 .collect();
             Ok(Term::comp(
-                &Term::plam(i.clone(), a, Mod::Precise),
+                &Term::plam(*i, a, Mod::Precise),
                 u,
                 system,
                 Mod::Precise,
@@ -327,16 +326,16 @@ fn comp_u(
     wi0: &Rc<Term>,
     ws: System<Term>,
 ) -> Result<Rc<Term>, TypeError> {
-    let ai1 = a.face(&ctx, &Face::cond(i, Dir::One))?;
+    let ai1 = a.face(ctx, &Face::cond(i, Dir::One))?;
 
     let vs = ws
         .iter()
         .map(|(alpha, w_alpha)| {
-            let a_face = a.face(&ctx, alpha)?;
-            let eqs_face = eqs.face(&ctx, alpha)?;
+            let a_face = a.face(ctx, alpha)?;
+            let eqs_face = eqs.face(ctx, alpha)?;
             Ok((
                 alpha.clone(),
-                unglue_u(&ctx, w_alpha, &a_face, eqs_face, Mod::Precise)?,
+                unglue_u(ctx, w_alpha, &a_face, eqs_face, Mod::Precise)?,
             ))
         })
         .collect::<Result<System<_>, TypeError>>()?;
@@ -345,7 +344,7 @@ fn comp_u(
     let vi0 = unglue_u(
         ctx,
         wi0,
-        &a.face(&ctx, &Face::cond(i, Dir::Zero))?,
+        &a.face(ctx, &Face::cond(i, Dir::Zero))?,
         eqs.face(ctx, &Face::cond(i, Dir::Zero))?,
         Mod::Precise,
     )?;
@@ -416,7 +415,6 @@ fn comp_u(
         .map(|(gamma, eq_g)| {
             let mut fibs_gamma =
                 System::intersect(&wsi1.face(ctx, gamma)?, &vsi1.face(ctx, gamma)?)
-                    .into_iter()
                     .map(|(k, (w_val, v_val))| (k.clone(), (w_val.clone(), const_path(v_val))))
                     .collect::<HashMap<_, _>>();
 
@@ -448,7 +446,7 @@ fn comp_u(
             fibersys_prime
                 .iter()
                 .map(|(k, path)| (k.clone(), path.1.clone())),
-            vsi1.iter().map(|(k, v)| (k.clone(), const_path(&v))),
+            vsi1.iter().map(|(k, v)| (k.clone(), const_path(v))),
         )
         .collect();
 
@@ -512,7 +510,7 @@ fn lem_eq(
                 ctx,
                 &j,
                 &eqaj,
-                &app_formula(ctx, &pa, Formula::Atom(i))?,
+                &app_formula(ctx, pa, Formula::Atom(i))?,
                 System::empty()
                     .insert(Face::cond(&i, Dir::Zero), trans_fill(ctx, &j, &eqaj, &ba)?)
                     .insert(
@@ -581,9 +579,9 @@ fn comp_glue(
         .collect::<Result<System<_>, TypeError>>()?;
 
     let vsi1 = vs.face(ctx, &Face::cond(i, Dir::One))?;
-    let vi0 = unglue(ctx, &wi0, eqs.face(ctx, &Face::cond(i, Dir::Zero))?)?;
+    let vi0 = unglue(ctx, wi0, eqs.face(ctx, &Face::cond(i, Dir::Zero))?)?;
 
-    let vi1_prime = comp(ctx, i, &a, &vi0, &vs)?;
+    let vi1_prime = comp(ctx, i, a, &vi0, &vs)?;
 
     let eqs_i1 = eqs.face(ctx, &Face::cond(i, Dir::One))?;
     let eqs_prime = eqs
@@ -708,7 +706,7 @@ fn comp_hit(
         us.iter()
             .map(|(alpha, u_alpha)| {
                 let v = Term::plam(
-                    i.clone(),
+                    *i,
                     &squeeze_hit(ctx, i, &a.face(ctx, alpha)?, u_alpha)?,
                     Mod::Precise,
                 );
@@ -733,7 +731,7 @@ fn squeeze_hit(
             let label = labels.iter().find(|l| &l.name() == n).unwrap();
             let tele = label.telescope();
             Ok(Term::con(
-                n.clone(),
+                *n,
                 squeezes(i, &tele.variables, ctx, us)?,
                 m.clone(),
             ))
@@ -752,7 +750,7 @@ fn squeeze_hit(
         }
         Term::HComp(_, v, vs, _) => {
             let ai1 = a.face(ctx, &Face::cond(i, Dir::One))?;
-            let squeezed = squeeze_hit(ctx, &i, a, v)?;
+            let squeezed = squeeze_hit(ctx, i, a, v)?;
 
             let processed_system = vs
                 .iter()
@@ -760,12 +758,12 @@ fn squeeze_hit(
                     None => Ok((
                         alpha.clone(),
                         Term::plam(
-                            j.clone(),
+                            j,
                             &squeeze_hit(
                                 ctx,
                                 i,
                                 &a.face(ctx, alpha)?,
-                                &app_formula(ctx, v_alpha, Formula::Atom(j.clone()))?,
+                                &app_formula(ctx, v_alpha, Formula::Atom(j))?,
                             )?,
                             Mod::Precise,
                         ),
@@ -773,12 +771,12 @@ fn squeeze_hit(
                     Some(Dir::Zero) => Ok((
                         alpha.clone(),
                         Term::plam(
-                            j.clone(),
+                            j,
                             &transp_hit(
                                 ctx,
                                 i,
                                 &a.face(ctx, &alpha.removed(i))?,
-                                &app_formula(ctx, v_alpha, Formula::Atom(j.clone()))?,
+                                &app_formula(ctx, v_alpha, Formula::Atom(j))?,
                             )?,
                             Mod::Precise,
                         ),
@@ -807,7 +805,7 @@ fn transp_hit(
             let label = labels.iter().find(|l| &l.name() == n).unwrap();
             let tele = label.telescope();
             Ok(Term::con(
-                n.clone(),
+                *n,
                 transps(i, tele.variables, ctx, us)?,
                 m.clone(),
             ))
@@ -831,7 +829,7 @@ fn transp_hit(
             vs.iter()
                 .map(|(alpha, v_alpha)| {
                     let v = Term::plam(
-                        j.clone(),
+                        j,
                         &transp_hit(
                             ctx,
                             &j,
@@ -872,7 +870,7 @@ fn path_comp(
     let j = ctx.fresh();
     let us_ = us.insert(Face::cond(&j, Dir::One), u.clone());
     Ok(Term::plam(
-        j.clone(),
+        j,
         &comp(ctx, i, a, u0, &us_)?,
         Mod::Precise,
     ))
@@ -963,12 +961,13 @@ fn mk_fiber_type(
     let tf = Term::var(f_lit, Mod::Precise);
     let tt = Term::var(t_lit, Mod::Precise);
     let ctx = ctx
-        .with_term(&a_lit, &a, &Term::hole())
-        .with_term(&x_lit, &x, &Term::hole())
+        .with_term(&a_lit, a, &Term::hole())
+        .with_term(&x_lit, x, &Term::hole())
         .with_term(&f_lit, &equiv_fun(equiv), &Term::hole())
         .with_term(&t_lit, &equiv_dom(equiv), &Term::hole());
 
-    let res = eval(
+    
+    eval(
         &ctx,
         &Term::sigma(
             &Term::lam(
@@ -984,8 +983,7 @@ fn mk_fiber_type(
             ),
             Mod::Precise,
         ),
-    );
-    res
+    )
 }
 
 fn comp_const_line(
@@ -1000,7 +998,7 @@ fn comp_const_line(
         .map(|(alpha, t_alpha)| {
             Ok((
                 alpha.clone(),
-                app_formula(ctx, t_alpha, Formula::Atom(i.clone()))?,
+                app_formula(ctx, t_alpha, Formula::Atom(i))?,
             ))
         })
         .collect::<Result<_, TypeError>>()?;

@@ -24,6 +24,20 @@ mod tests {
         }
     }
 
+    struct FakeNotifier {}
+
+    impl FakeNotifier {
+        fn new() -> FakeNotifier {
+            FakeNotifier {}
+        }
+    }
+
+    impl ProgressNotifier for FakeNotifier {
+        fn decl_check_started(&self, decl_name: &Identifier) {}
+
+        fn decl_check_finished(&self, decl_name: &Identifier) {}
+    }
+
     #[test]
     fn check_examples() {
         unsafe { backtrace_on_stack_overflow::enable() };
@@ -43,16 +57,11 @@ mod tests {
                 .unwrap();
 
                 let (modules, names) = resolve_modules(deps).unwrap();
-                let mut ctx = TypeContext::new();
-
-                println!("man {}", names.demangle(&1430)); // v
-                println!("man {}", names.demangle(&1436)); // j
-                println!("man {}", names.demangle(&1415)); // B
-                println!("man {}", names.demangle(&1423)); // b
+                let mut ctx = TypeContext::new(FakeNotifier::new());
 
                 for set in modules.iter() {
                     let start_time = SystemTime::now();
-                    ctx = check_declaration_set(ctx, set).unwrap();
+                    ctx = check_declaration_set(&ctx, set).unwrap();
                     let end_time = SystemTime::now();
                     let x = end_time.duration_since(start_time).unwrap();
                     println!("time: {}", x.as_secs_f64());

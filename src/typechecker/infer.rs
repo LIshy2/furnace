@@ -27,7 +27,7 @@ pub fn label_type(name: &Identifier, tpe: &Rc<Term>) -> Result<Rc<Term>, TypeErr
     let mut res = tpe.clone();
     for (var, tpe) in label.telescope().variables.iter().rev() {
         res = Term::pi(
-            &Term::lam(var.clone(), tpe, &res, Mod::Precise),
+            &Term::lam(*var, tpe, &res, Mod::Precise),
             Mod::Precise,
         )
     }
@@ -39,7 +39,7 @@ pub fn infer(ctx: &TypeContext, term: &Rc<Term>) -> Result<Rc<Term>, TypeError> 
         Term::U => Ok(Rc::new(Term::U)),
         Term::Var(name, _) => Ok(ctx
             .lookup_term(name)
-            .ok_or(ErrorCause::UnknownTermName(name.clone()))?
+            .ok_or(ErrorCause::UnknownTermName(*name))?
             .tpe),
         Term::App(f, a, _) => {
             let fun_tpe = infer(ctx, f)?;
@@ -133,7 +133,7 @@ pub fn infer(ctx: &TypeContext, term: &Rc<Term>) -> Result<Rc<Term>, TypeError> 
                     Err(ErrorCause::Hole)?
                 };
                 let tpe = eval(&arg_ctx, tpe)?;
-                arg_ctx = arg_ctx.with_term(&name, arg, &tpe);
+                arg_ctx = arg_ctx.with_term(name, arg, &tpe);
                 con_type = body.clone();
                 check(&arg_ctx, arg, &tpe)?;
             }

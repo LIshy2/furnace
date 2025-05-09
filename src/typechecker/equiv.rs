@@ -20,31 +20,31 @@ impl Equiv for &Rc<Term> {
             (l, r) if l == r => Ok(true),
             (Term::Lam(x, a, u, _), Term::Lam(x_, a_, u_, _)) => {
                 let y = ctx.fresh();
-                let eq_ctx = ctx.with_term(&y, &Term::var(y.clone(), Mod::Precise), a);
+                let eq_ctx = ctx.with_term(&y, &Term::var(y, Mod::Precise), a);
 
-                let ctx_lhs = eq_ctx.with_term(x, &Term::var(y.clone(), Mod::Precise), a);
-                let ctx_rhs = eq_ctx.with_term(x_, &Term::var(y.clone(), Mod::Precise), a_);
+                let ctx_lhs = eq_ctx.with_term(x, &Term::var(y, Mod::Precise), a);
+                let ctx_rhs = eq_ctx.with_term(x_, &Term::var(y, Mod::Precise), a_);
 
                 Ok(Equiv::equiv(ctx, a, a_)?
                     && Equiv::equiv(&eq_ctx, &eval(&ctx_lhs, u)?, &eval(&ctx_rhs, u_)?)?)
             }
             (Term::Lam(x, tpe, u, _), _) => {
-                let new_ctx = ctx.with_term(&x, &Term::var(x.clone(), Mod::Precise), tpe);
+                let new_ctx = ctx.with_term(x, &Term::var(*x, Mod::Precise), tpe);
 
                 Equiv::equiv(
                     &new_ctx,
                     &eval(
-                        &new_ctx.with_term(&x, &Rc::new(Term::Var(x.clone(), Mod::Precise)), tpe),
+                        &new_ctx.with_term(x, &Rc::new(Term::Var(*x, Mod::Precise)), tpe),
                         u,
                     )?,
-                    &app(&new_ctx, rhs, &Term::var(x.clone(), Mod::Precise))?,
+                    &app(&new_ctx, rhs, &Term::var(*x, Mod::Precise))?,
                 )
             }
             (_, Term::Lam(x, tpe, u, _)) => {
-                let new_ctx = ctx.with_term(&x, &Term::var(x.clone(), Mod::Precise), tpe);
+                let new_ctx = ctx.with_term(x, &Term::var(*x, Mod::Precise), tpe);
                 Equiv::equiv(
                     &new_ctx,
-                    &app(&new_ctx, lhs, &Term::var(x.clone(), Mod::Precise))?,
+                    &app(&new_ctx, lhs, &Term::var(*x, Mod::Precise))?,
                     &eval(&new_ctx, u)?,
                 )
             }
@@ -92,7 +92,7 @@ impl Equiv for &Rc<Term> {
                     && Equiv::equiv(ctx, v, &get_second(rhs))?)
             }
             (_, Term::Pair(u, v, _)) => {
-                Ok(Equiv::equiv(ctx, &get_first(&lhs), u)?
+                Ok(Equiv::equiv(ctx, &get_first(lhs), u)?
                     && Equiv::equiv(ctx, &get_second(lhs), v)?)
             }
             (Term::Fst(u, _), Term::Fst(u_, _)) => Equiv::equiv(ctx, u, u_),
@@ -116,7 +116,7 @@ impl Equiv for &Rc<Term> {
                 Equiv::equiv(
                     &new_ctx,
                     &a.swap(i, &j),
-                    &app_formula(&new_ctx, rhs, Formula::Atom(j.clone()))?,
+                    &app_formula(&new_ctx, rhs, Formula::Atom(j))?,
                 )
             }
             (_, Term::PLam(i_, a_, _)) => {
@@ -124,7 +124,7 @@ impl Equiv for &Rc<Term> {
                 let new_ctx = ctx.with_formula(&j, Formula::Atom(j));
                 Equiv::equiv(
                     &new_ctx,
-                    &app_formula(&new_ctx, lhs, Formula::Atom(j.clone()))?,
+                    &app_formula(&new_ctx, lhs, Formula::Atom(j))?,
                     &a_.swap(i_, &j),
                 )
             }

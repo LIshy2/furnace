@@ -18,7 +18,7 @@ use super::{
 pub fn app(ctx: &TypeContext, fun: &Rc<Term>, arg: &Rc<Term>) -> Result<Rc<Term>, TypeError> {
     match (fun.as_ref(), arg.as_ref()) {
         (Term::Lam(x, tpe, body, _), _) => {
-            let new_ctx = ctx.with_term(&x, &arg, tpe);
+            let new_ctx = ctx.with_term(x, arg, tpe);
             eval(&new_ctx, body)
         }
         (Term::Split(_, ty, branches, _), Term::Con(c, vs, _)) => {
@@ -108,13 +108,13 @@ pub fn app(ctx: &TypeContext, fun: &Rc<Term>, arg: &Rc<Term>) -> Result<Rc<Term>
                     let ws_ = ws
                         .iter()
                         .map(|(alpha, t_alpha)| {
-                            Ok((alpha.clone(), app(ctx, &fun.face(ctx, &alpha)?, t_alpha)?))
+                            Ok((alpha.clone(), app(ctx, &fun.face(ctx, alpha)?, t_alpha)?))
                         })
                         .collect::<Result<_, TypeError>>()?;
                     comp(
                         ctx,
                         &j,
-                        &app(ctx, lam, &fill(ctx, &j, &a, &w, wsj)?)?,
+                        &app(ctx, lam, &fill(ctx, &j, a, w, wsj)?)?,
                         &w_,
                         &ws_,
                     )
@@ -138,15 +138,15 @@ pub fn app(ctx: &TypeContext, fun: &Rc<Term>, arg: &Rc<Term>) -> Result<Rc<Term>
             let (aj, fj) = (a.swap(i, &j), f.swap(i, &j));
             let tsj = ts
                 .iter()
-                .map(|(f, v)| Ok((f.clone(), app_formula(&ctx, v, Formula::Atom(j.clone()))?)))
+                .map(|(f, v)| Ok((f.clone(), app_formula(&ctx, v, Formula::Atom(j))?)))
                 .collect::<Result<_, TypeError>>()?;
             let v = trans_fill_neg(&ctx, &j, &aj, arg)?;
             let vi0 = trans_neg(&ctx, &j, &aj, arg)?;
             let mut m = HashMap::new();
             let b = border(&ctx, &v, &tsj)?;
             for (k, v) in tsj.iter() {
-                if let Some(v2) = b.get(&k) {
-                    m.insert(k.clone(), app(&ctx, &v, v2)?);
+                if let Some(v2) = b.get(k) {
+                    m.insert(k.clone(), app(&ctx, v, v2)?);
                 }
             }
             comp(

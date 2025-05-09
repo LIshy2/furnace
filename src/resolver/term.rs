@@ -6,7 +6,6 @@ use crate::ctt::term::{
 };
 use crate::parser::ast;
 use crate::resolver::error::ResolveError;
-use std::collections::HashMap;
 use std::rc::Rc;
 
 fn where_chain(decls: Vec<DeclarationSet<Term<()>>>, head: Rc<Term<()>>) -> Rc<Term<()>> {
@@ -125,7 +124,7 @@ pub fn resolve_term(ctx: ResolveContext, term: ast::Term) -> Result<Rc<Term<()>>
                     name,
                     resolve_term(ctx.clone(), *arg)?,
                     xs.into_iter()
-                        .map(|t| Ok(resolve_term(ctx.clone(), t)?))
+                        .map(|t| resolve_term(ctx.clone(), t))
                         .collect::<Result<_, ResolveError>>()?,
                     phis.into_iter()
                         .map(|f| resolve_formula(ctx.clone(), f))
@@ -154,7 +153,7 @@ pub fn resolve_term(ctx: ResolveContext, term: ast::Term) -> Result<Rc<Term<()>>
                 Term::Con(label, add_args, _) => {
                     let mut fields = add_args.clone();
                     fields.append(&mut args.clone());
-                    Ok(Rc::new(Term::Con(label.clone(), fields, ())))
+                    Ok(Rc::new(Term::Con(*label, fields, ())))
                 }
                 _ => Ok(args
                     .into_iter()
@@ -364,7 +363,7 @@ fn resolve_system(
     system: ast::System,
 ) -> Result<System<Term<()>>, ResolveError> {
     let ast::System(sides) = system;
-    Ok(sides
+    sides
         .into_iter()
         .map(|side| {
             let faces = side
@@ -380,5 +379,5 @@ fn resolve_system(
                 .collect::<Result<_, ResolveError>>()?;
             Ok((Face { binds: faces }, resolve_term(ctx.clone(), *side.exp)?))
         })
-        .collect::<Result<_, ResolveError>>()?)
+        .collect::<Result<_, ResolveError>>()
 }

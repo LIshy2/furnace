@@ -86,10 +86,10 @@ impl Telescope {
         self,
         body: B,
     ) -> Result<Rc<term::Term<()>>, ResolveError> {
-        self.through(|ctx| body(ctx), &|name, tpe, body| {
+        self.through(body, &|name, tpe, body| {
             let tpe = Rc::new(tpe.clone());
             Ok(Rc::new(term::Term::Lam(
-                name.clone(),
+                *name,
                 tpe.clone(),
                 body,
                 (),
@@ -101,10 +101,10 @@ impl Telescope {
         self,
         result_type: R,
     ) -> Result<Rc<term::Term<()>>, ResolveError> {
-        self.through(|ctx| result_type(ctx), &|name, tpe, result_type| {
+        self.through(result_type, &|name, tpe, result_type| {
             let tpe = Rc::new(tpe.clone());
             Ok(Rc::new(term::Term::Pi(
-                Rc::new(term::Term::Lam(name.clone(), tpe, result_type, ())),
+                Rc::new(term::Term::Lam(*name, tpe, result_type, ())),
                 (),
             )))
         })
@@ -114,10 +114,10 @@ impl Telescope {
         self,
         result_type: R,
     ) -> Result<Rc<term::Term<()>>, ResolveError> {
-        self.through(|ctx| result_type(ctx), &|name, tpe, result_type| {
+        self.through(result_type, &|name, tpe, result_type| {
             let tpe = Rc::new(tpe.clone());
             Ok(Rc::new(term::Term::Sigma(
-                Rc::new(term::Term::Lam(name.clone(), tpe, result_type, ())),
+                Rc::new(term::Term::Lam(*name, tpe, result_type, ())),
                 (),
             )))
         })

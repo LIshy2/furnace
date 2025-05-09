@@ -1,4 +1,3 @@
-use furnace::parser;
 mod tests {
     use furnace::parser;
     use std::fs;
@@ -18,10 +17,10 @@ mod tests {
                 let mut content = String::new();
                 file.read_to_string(&mut content).unwrap();
                 let file_name = path.file_name().unwrap().to_str().unwrap();
-                print!("Parsing... {}\n", file_name);
+                println!("Parsing... {}", file_name);
                 module_parser
                     .parse(&content)
-                    .expect(&format!("UNPARSED {}", path.display()));
+                    .unwrap_or_else(|_| panic!("UNPARSED {}", path.display()));
             }
         }
     }

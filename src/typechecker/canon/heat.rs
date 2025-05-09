@@ -11,7 +11,7 @@ fn term_size(t: &Rc<Term>) -> usize {
     match t.as_ref() {
         Term::U => size_of::<Term>(),
         Term::Pair(fst, snd, _) => term_size(fst) + term_size(snd),
-        Term::Con(_, v, _) => size_of::<Term>() + v.iter().map(|f| term_size(f)).sum::<usize>(),
+        Term::Con(_, v, _) => size_of::<Term>() + v.iter().map(term_size).sum::<usize>(),
         _ => panic!("NOT HIT ELEMENT"),
     }
 }
@@ -25,8 +25,8 @@ impl PathIndex {
         PathIndex { paths: vec![] }
     }
     pub fn add(&mut self, p1: &Rc<Term>, p2: &Rc<Term>) {
-        if self.paths.iter().find(|p| &p.begin == p1).is_some()
-            && self.paths.iter().find(|p| &p.begin == p2).is_some()
+        if self.paths.iter().any(|p| &p.begin == p1)
+            && self.paths.iter().any(|p| &p.begin == p2)
         {
             return;
         }
@@ -41,7 +41,7 @@ impl PathIndex {
                 head = p.end.clone();
             }
         }
-        let mut new_target = if term_size(&head) > term_size(end) {
+        let new_target = if term_size(&head) > term_size(end) {
             end
         } else {
             &head
@@ -74,7 +74,7 @@ impl PathIndex {
         match t.as_ref() {
             Term::Con(n, cs, m) => {
                 let ccs = cs.iter().map(|f| self.compact(f)).collect();
-                let ut = Term::Con(n.clone(), ccs, m.clone());
+                let ut = Term::Con(*n, ccs, m.clone());
                 if let Some(res) = self.find_optimal_form(&ut) {
                     res
                 } else {
