@@ -1,5 +1,5 @@
 use crate::ctt::term::{Dir, Formula, Identifier, System};
-use crate::precise::term::{Mod, Term};
+use crate::precise::term::{Mod, Term, Value};
 use crate::typechecker::canon::eval::eval_formula;
 use crate::typechecker::context::TypeContext;
 use crate::typechecker::error::TypeError;
@@ -11,51 +11,94 @@ use super::canon::eval::{eval, get_first, get_second};
 use super::canon::nominal::{border, Nominal};
 
 pub trait Equiv {
-    fn equiv(ctx: &TypeContext, lhs: Self, rhs: Self) -> Result<bool, TypeError>;
+    fn equiv(ctx: &TypeContext, lhs: &Self, rhs: &Self) -> Result<bool, TypeError>;
 }
 
-impl Equiv for &Rc<Term> {
-    fn equiv(ctx: &TypeContext, lhs: Self, rhs: Self) -> Result<bool, TypeError> {
+impl Equiv for Rc<Value> {
+    fn equiv(ctx: &TypeContext, lhs: &Self, rhs: &Self) -> Result<bool, TypeError> {
         match (lhs.as_ref(), rhs.as_ref()) {
             (l, r) if l == r => Ok(true),
-            (Term::Lam(x, a, u, _), Term::Lam(x_, a_, u_, _)) => {
+            (
+                Value::Stuck(Term::Lam(x, a, u, _), e, _),
+                Value::Stuck(Term::Lam(x_, a_, u_, _), e_, _),
+            ) => {
+                let a = eval(&ctx.in_closure(e), a)?;
+                let a_ = eval(&ctx.in_closure(e_), a_)?;
+
                 let y = ctx.fresh();
-                let eq_ctx = ctx.with_term(&y, &Term::var(y, Mod::Precise), a);
+                let eq_ctx = ctx.with_term(&y, &Value::var(y, Mod::Precise), &a);
+                let ctx_lhs: TypeContext =
+                    eq_ctx
+                        .in_closure(e)
+                        .with_term(x, &Value::var(y, Mod::Precise), &a);
+                let ctx_rhs =
+                    eq_ctx
+                        .in_closure(e_)
+                        .with_term(x_, &Value::var(y, Mod::Precise), &a_);
 
-                let ctx_lhs = eq_ctx.with_term(x, &Term::var(y, Mod::Precise), a);
-                let ctx_rhs = eq_ctx.with_term(x_, &Term::var(y, Mod::Precise), a_);
-
-                Ok(Equiv::equiv(ctx, a, a_)?
+                Ok(Equiv::equiv(ctx, &a, &a_)?
                     && Equiv::equiv(&eq_ctx, &eval(&ctx_lhs, u)?, &eval(&ctx_rhs, u_)?)?)
             }
-            (Term::Lam(x, tpe, u, _), _) => {
-                let new_ctx = ctx.with_term(x, &Term::var(*x, Mod::Precise), tpe);
+            (Value::Stuck(Term::Lam(x, tpe, u, _), e, _), _) => {
+                let tpe = eval(&ctx.in_closure(e), tpe)?;
+
+                let new_ctx = ctx
+                    .in_closure(e)
+                    .with_term(x, &Value::var(*x, Mod::Precise), &tpe);
 
                 Equiv::equiv(
                     &new_ctx,
                     &eval(
-                        &new_ctx.with_term(x, &Rc::new(Term::Var(*x, Mod::Precise)), tpe),
+                        &new_ctx.with_term(x, &Value::var(*x, Mod::Precise), &tpe),
                         u,
                     )?,
-                    &app(&new_ctx, rhs, &Term::var(*x, Mod::Precise))?,
+                    &app(&new_ctx, rhs, &Value::var(*x, Mod::Precise))?,
                 )
             }
-            (_, Term::Lam(x, tpe, u, _)) => {
-                let new_ctx = ctx.with_term(x, &Term::var(*x, Mod::Precise), tpe);
+            (_, Value::Stuck(Term::Lam(x, tpe, u, _), e, _)) => {
+                let tpe = eval(&ctx.in_closure(e), tpe)?;
+
+                let new_ctx = ctx
+                    .in_closure(e)
+                    .with_term(x, &Value::var(*x, Mod::Precise), &tpe);
+
+                // println!("START EQ EVAL {:?}", rhs);
                 Equiv::equiv(
                     &new_ctx,
-                    &app(&new_ctx, lhs, &Term::var(*x, Mod::Precise))?,
+                    &app(&new_ctx, lhs, &Value::var(*x, Mod::Precise))?,
                     &eval(&new_ctx, u)?,
                 )
             }
-            (Term::Split(p, _, _, _), Term::Split(p_, _, _, _)) => Ok(p == p_),
-            (Term::Sum(p, _, _), Term::Sum(p_, _, _)) => Ok(p == p_),
-            (Term::HSum(p, _, _), Term::HSum(p_, _, _)) => Ok(p == p_),
-            (Term::Undef(p, _), Term::Undef(p_, _)) => Ok(p == p_),
-            (Term::Hole, Term::Hole) => Ok(false),
-            (Term::Pi(lam1, _), Term::Pi(lam2, _)) => Equiv::equiv(ctx, lam1, lam2),
-            (Term::Sigma(lam1, _), Term::Sigma(lam2, _)) => Equiv::equiv(ctx, lam1, lam2),
-            (Term::Con(c, us, _), Term::Con(c_, us_, _)) => {
+            (
+                Value::Stuck(Term::Split(p, _, _, _), _, _),
+                Value::Stuck(Term::Split(p_, _, _, _), _, _),
+            ) => Ok(p == p_),
+            (Value::Stuck(Term::Sum(p, _, _), _, _), Value::Stuck(Term::Sum(p_, _, _), _, _)) => {
+                if p != p_ {
+                    println!("AGAAAAA");
+                }
+                Ok(p == p_)
+            }
+            (Value::Stuck(Term::HSum(p, _, _), _, _), Value::Stuck(Term::HSum(p_, _, _), _, _)) => {
+                if p != p_ {
+                    println!("AGAAAAA");
+                }
+                Ok(p == p_)
+            }
+            (Value::Stuck(Term::Undef(p, _), _, _), Value::Stuck(Term::Undef(p_, _), _, _)) => {
+                if p != p_ {
+                    println!("AGAAAAA");
+                }
+                Ok(p == p_)
+            }
+            (Value::Stuck(Term::Hole, _, _), Value::Stuck(Term::Hole, _, _)) => Ok(false),
+            (Value::Pi(a1, lam1, _), Value::Pi(a2, lam2, _)) => {
+                Ok(Equiv::equiv(ctx, lam1, lam2)? && Equiv::equiv(ctx, a1, a2)?)
+            }
+            (Value::Sigma(a1, lam1, _), Value::Sigma(a2, lam2, _)) => {
+                Ok(Equiv::equiv(ctx, lam1, lam2)? && Equiv::equiv(ctx, a1, a2)?)
+            }
+            (Value::Con(c, us, _), Value::Con(c_, us_, _)) => {
                 let field_eq = us.len() == us_.len()
                     && us
                         .iter()
@@ -65,7 +108,7 @@ impl Equiv for &Rc<Term> {
                         })?;
                 Ok(c == c_ && field_eq)
             }
-            (Term::PCon(c, v, us, phis, _), Term::PCon(c_, v_, us_, phis_, _)) => {
+            (Value::PCon(c, v, us, phis, _), Value::PCon(c_, v_, us_, phis_, _)) => {
                 let field_eq = us.len() == us_.len()
                     && us
                         .iter()
@@ -84,33 +127,39 @@ impl Equiv for &Rc<Term> {
 
                 Ok(c == c_ && field_eq && interval_eq && Equiv::equiv(ctx, v, v_)?)
             }
-            (Term::Pair(u, v, _), Term::Pair(u_, v_, _)) => {
+            (Value::Pair(u, v, _), Value::Pair(u_, v_, _)) => {
                 Ok(Equiv::equiv(ctx, u, u_)? && Equiv::equiv(ctx, v, v_)?)
             }
-            (Term::Pair(u, v, _), _) => {
+            (Value::Pair(u, v, _), _) => {
                 Ok(Equiv::equiv(ctx, u, &get_first(rhs))?
                     && Equiv::equiv(ctx, v, &get_second(rhs))?)
             }
-            (_, Term::Pair(u, v, _)) => {
+            (_, Value::Pair(u, v, _)) => {
                 Ok(Equiv::equiv(ctx, &get_first(lhs), u)?
                     && Equiv::equiv(ctx, &get_second(lhs), v)?)
             }
-            (Term::Fst(u, _), Term::Fst(u_, _)) => Equiv::equiv(ctx, u, u_),
-            (Term::Snd(u, _), Term::Snd(u_, _)) => Equiv::equiv(ctx, u, u_),
-            (Term::App(u, v, _), Term::App(u_, v_, _)) => {
+            (Value::Fst(u, _), Value::Fst(u_, _)) => Equiv::equiv(ctx, u, u_),
+            (Value::Snd(u, _), Value::Snd(u_, _)) => Equiv::equiv(ctx, u, u_),
+            (Value::App(u, v, _), Value::App(u_, v_, _)) => {
                 Ok(Equiv::equiv(ctx, u, u_)? && Equiv::equiv(ctx, v, v_)?)
             }
-            (Term::Var(x, _), Term::Var(x_, _)) => Ok(x == x_),
-            (Term::PathP(a, b, c, _), Term::PathP(a_, b_, c_, _)) => Ok(Equiv::equiv(ctx, a, a_)?
-                && Equiv::equiv(ctx, b, b_)?
-                && Equiv::equiv(ctx, c, c_)?),
-            (Term::PLam(i, a, _), Term::PLam(i_, a_, _)) => {
+            (Value::Var(x, _), Value::Var(x_, _)) => {
+                if x != x_ {
+                    println!("AGAAAAA VAR {:?} {:?}", x, x_);
+                }
+                Ok(x == x_)
+            }
+            (Value::PathP(a, b, c, _), Value::PathP(a_, b_, c_, _)) => {
+                Ok(Equiv::equiv(ctx, a, a_)?
+                    && Equiv::equiv(ctx, b, b_)?
+                    && Equiv::equiv(ctx, c, c_)?)
+            }
+            (Value::PLam(i, a, _), Value::PLam(i_, a_, _)) => {
                 let j = ctx.fresh();
                 let ctx = ctx.with_formula(&j, Formula::Atom(j));
                 Equiv::equiv(&ctx, &a.swap(i, &j), &a_.swap(i_, &j))
             }
-
-            (Term::PLam(i, a, _), _) => {
+            (Value::PLam(i, a, _), _) => {
                 let j = ctx.fresh();
                 let new_ctx = ctx.with_formula(&j, Formula::Atom(j));
                 Equiv::equiv(
@@ -119,7 +168,7 @@ impl Equiv for &Rc<Term> {
                     &app_formula(&new_ctx, rhs, Formula::Atom(j))?,
                 )
             }
-            (_, Term::PLam(i_, a_, _)) => {
+            (_, Value::PLam(i_, a_, _)) => {
                 let j = ctx.fresh();
                 let new_ctx = ctx.with_formula(&j, Formula::Atom(j));
                 Equiv::equiv(
@@ -128,56 +177,56 @@ impl Equiv for &Rc<Term> {
                     &a_.swap(i_, &j),
                 )
             }
-            (Term::AppFormula(u, x, _), Term::AppFormula(u_, x_, _)) => {
+            (Value::AppFormula(u, x, _), Value::AppFormula(u_, x_, _)) => {
                 Ok(Equiv::equiv(ctx, u, u_)? && Equiv::equiv(ctx, x, x_)?)
             }
-            (Term::Comp(tpe1, u, es, _), Term::Comp(tpe2, u_, es_, _))
-                if tpe1.as_ref() == &Term::U && tpe2.as_ref() == &Term::U =>
-            {
+            (Value::CompU(u, es, _), Value::CompU(u_, es_, _)) => {
                 Ok(Equiv::equiv(ctx, u, u_)? && Equiv::equiv(ctx, es, es_)?)
             }
-            (Term::Comp(a, u, ts, _), Term::Comp(a_, u_, ts_, _)) => Ok(Equiv::equiv(ctx, a, a_)?
-                && Equiv::equiv(ctx, u, u_)?
-                && Equiv::equiv(ctx, ts, ts_)?),
-            (Term::HComp(a, u, ts, _), Term::HComp(a_, u_, ts_, _)) => {
+            (Value::Comp(a, u, ts, _), Value::Comp(a_, u_, ts_, _)) => {
                 Ok(Equiv::equiv(ctx, a, a_)?
                     && Equiv::equiv(ctx, u, u_)?
                     && Equiv::equiv(ctx, ts, ts_)?)
             }
-            (Term::Glue(v, equivs, _), Term::Glue(v_, equivs_, _)) => {
+            (Value::HComp(a, u, ts, _), Value::HComp(a_, u_, ts_, _)) => {
+                Ok(Equiv::equiv(ctx, a, a_)?
+                    && Equiv::equiv(ctx, u, u_)?
+                    && Equiv::equiv(ctx, ts, ts_)?)
+            }
+            (Value::Glue(v, equivs, _), Value::Glue(v_, equivs_, _)) => {
                 Ok(Equiv::equiv(ctx, v, v_)? && Equiv::equiv(ctx, equivs, equivs_)?)
             }
-            (Term::GlueElem(u, ts, _), other) => match (u.as_ref(), other) {
-                (Term::UnGlueElem(b, equivs, _), _) | (Term::UnGlueElemU(b, _, equivs, _), _) => {
+            (Value::GlueElem(u, ts, _), other) => match (u.as_ref(), other) {
+                (Value::UnGlueElem(b, equivs, _), _) | (Value::UnGlueElemU(b, _, equivs, _), _) => {
                     Ok(Equiv::equiv(ctx, &border(ctx, b, equivs)?, ts)?
                         && Equiv::equiv(ctx, b, rhs)?)
                 }
-                (_, Term::GlueElem(u_, us_, _)) => {
+                (_, Value::GlueElem(u_, us_, _)) => {
                     Ok(Equiv::equiv(ctx, u, u_)? && Equiv::equiv(ctx, ts, us_)?)
                 }
                 _ => Ok(false),
             },
-            (other, Term::GlueElem(u, ts, _)) => match (u.as_ref(), other) {
-                (Term::UnGlueElem(b, equivs, _), _) | (Term::UnGlueElemU(b, _, equivs, _), _) => {
+            (other, Value::GlueElem(u, ts, _)) => match (u.as_ref(), other) {
+                (Value::UnGlueElem(b, equivs, _), _) | (Value::UnGlueElemU(b, _, equivs, _), _) => {
                     Ok(Equiv::equiv(ctx, &border(ctx, b, equivs)?, ts)?
                         && Equiv::equiv(ctx, lhs, b)?)
                 }
-                (_, Term::GlueElem(u_, us_, _)) => {
+                (_, Value::GlueElem(u_, us_, _)) => {
                     Ok(Equiv::equiv(ctx, u, u_)? && Equiv::equiv(ctx, ts, us_)?)
                 }
                 _ => Ok(false),
             },
-            (Term::UnGlueElem(u, _, _), Term::UnGlueElem(u_, _, _)) => Equiv::equiv(ctx, u, u_),
-            (Term::UnGlueElemU(u, _, _, _), Term::UnGlueElemU(u_, _, _, _)) => {
+            (Value::UnGlueElem(u, _, _), Value::UnGlueElem(u_, _, _)) => Equiv::equiv(ctx, u, u_),
+            (Value::UnGlueElemU(u, _, _, _), Value::UnGlueElemU(u_, _, _, _)) => {
                 Equiv::equiv(ctx, u, u_)
             }
-            (Term::IdPair(v, vs, _), Term::IdPair(v_, vs_, _)) => {
+            (Value::IdPair(v, vs, _), Value::IdPair(v_, vs_, _)) => {
                 Ok(Equiv::equiv(ctx, v, v_)? && Equiv::equiv(ctx, vs, vs_)?)
             }
-            (Term::Id(a, u, v, _), Term::Id(a_, u_, v_, _)) => Ok(Equiv::equiv(ctx, a, a_)?
+            (Value::Id(a, u, v, _), Value::Id(a_, u_, v_, _)) => Ok(Equiv::equiv(ctx, a, a_)?
                 && Equiv::equiv(ctx, u, u_)?
                 && Equiv::equiv(ctx, v, v_)?),
-            (Term::IdJ(a, u, c, d, x, p, _), Term::IdJ(a_, u_, c_, d_, x_, p_, _)) => {
+            (Value::IdJ(a, u, c, d, x, p, _), Value::IdJ(a_, u_, c_, d_, x_, p_, _)) => {
                 Ok(Equiv::equiv(ctx, a, a_)?
                     && Equiv::equiv(ctx, u, u_)?
                     && Equiv::equiv(ctx, c, c_)?
@@ -185,14 +234,20 @@ impl Equiv for &Rc<Term> {
                     && Equiv::equiv(ctx, x, x_)?
                     && Equiv::equiv(ctx, p, p_)?)
             }
-            _ => Ok(false),
+            _ => {
+                println!("AAAA {:?} {:?}", lhs, rhs);
+                Ok(false)
+            }
         }
     }
 }
 
-impl Equiv for &System<Term> {
-    fn equiv(ctx: &TypeContext, lhs: Self, rhs: Self) -> Result<bool, TypeError> {
-        // println!("System eq");
+impl<'a, A> Equiv for System<A>
+where
+    Rc<A>: Equiv,
+    A: Clone,
+{
+    fn equiv(ctx: &TypeContext, lhs: &Self, rhs: &Self) -> Result<bool, TypeError> {
         if lhs.len() == rhs.len() {
             let mut eq = true;
             for (k, v1) in lhs.iter() {
@@ -211,19 +266,25 @@ impl Equiv for &System<Term> {
     }
 }
 
-impl Equiv for &Formula {
-    fn equiv(ctx: &TypeContext, lhs: Self, rhs: Self) -> Result<bool, TypeError> {
+impl Equiv for Formula {
+    fn equiv(ctx: &TypeContext, lhs: &Self, rhs: &Self) -> Result<bool, TypeError> {
         let atoms = {
             let mut l_atoms = lhs
                 .support()
                 .into_iter()
-                .filter(|i| ctx.lookup_formula(i).is_none())
+                .filter(|i| match ctx.lookup_formula(i) {
+                    Some(f) => f == Formula::Atom(*i),
+                    None => true,
+                })
                 .collect::<HashSet<Identifier>>();
 
             let r_atoms = rhs
                 .support()
                 .into_iter()
-                .filter(|i| ctx.lookup_formula(i).is_none())
+                .filter(|i| match ctx.lookup_formula(i) {
+                    Some(f) => f == Formula::Atom(*i),
+                    None => true,
+                })
                 .collect::<HashSet<Identifier>>();
 
             l_atoms.extend(r_atoms);

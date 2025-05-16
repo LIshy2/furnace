@@ -1,9 +1,14 @@
 use std::collections::hash_map::IntoIter;
 use std::collections::HashMap;
+use std::fmt::Debug;
+use std::fmt::Formatter;
 use std::hash::{Hash, Hasher};
 use std::ops::Index;
 use std::rc::Rc;
 
+use rpds::HashTrieMap;
+
+use crate::typechecker::context::Entry;
 use crate::utils::intersect;
 
 #[derive(Copy, Clone, Hash, Eq, PartialEq, Ord, PartialOrd, Debug)]
@@ -251,7 +256,7 @@ impl<A: Clone> System<A> {
         self.binds.len()
     }
 
-    pub fn intersect<'a>(&'a self, other: &'a System<A>) -> SystemIntersect<'a, A> {
+    pub fn intersect<'a, B>(&'a self, other: &'a System<B>) -> SystemIntersect<'a, A, B> {
         SystemIntersect {
             iter: intersect(&self.binds, &other.binds).into_iter(),
         }
@@ -278,12 +283,12 @@ impl<A> FromIterator<(Face, Rc<A>)> for System<A> {
     }
 }
 
-pub struct SystemIntersect<'a, A> {
-    iter: IntoIter<&'a Face, (&'a Rc<A>, &'a Rc<A>)>,
+pub struct SystemIntersect<'a, A, B> {
+    iter: IntoIter<&'a Face, (&'a Rc<A>, &'a Rc<B>)>,
 }
 
-impl<'a, A> Iterator for SystemIntersect<'a, A> {
-    type Item = (&'a Face, (&'a Rc<A>, &'a Rc<A>));
+impl<'a, A, B> Iterator for SystemIntersect<'a, A, B> {
+    type Item = (&'a Face, (&'a Rc<A>, &'a Rc<B>));
 
     fn next(&mut self) -> Option<Self::Item> {
         self.iter.next()
@@ -318,7 +323,6 @@ pub enum Term<M> {
     Glue(Rc<Term<M>>, System<Term<M>>, M),
     GlueElem(Rc<Term<M>>, System<Term<M>>, M),
     UnGlueElem(Rc<Term<M>>, System<Term<M>>, M),
-    UnGlueElemU(Rc<Term<M>>, Rc<Term<M>>, System<Term<M>>, M),
     Id(Rc<Term<M>>, Rc<Term<M>>, Rc<Term<M>>, M),
     IdPair(Rc<Term<M>>, System<Term<M>>, M),
     IdJ(
@@ -448,15 +452,6 @@ impl<M> Term<M> {
         Rc::new(Term::UnGlueElem(a.clone(), sys, meta))
     }
 
-    pub fn unglue_elem_u(
-        a: &Rc<Term<M>>,
-        b: &Rc<Term<M>>,
-        sys: System<Term<M>>,
-        meta: M,
-    ) -> Rc<Term<M>> {
-        Rc::new(Term::UnGlueElemU(a.clone(), b.clone(), sys, meta))
-    }
-
     pub fn id(a: &Rc<Term<M>>, x: &Rc<Term<M>>, y: &Rc<Term<M>>, meta: M) -> Rc<Term<M>> {
         Rc::new(Term::Id(a.clone(), x.clone(), y.clone(), meta))
     }
@@ -483,24 +478,6 @@ impl<M> Term<M> {
             q.clone(),
             meta,
         ))
-    }
-
-    pub fn is_neutral(&self) -> bool {
-        match self {
-            Term::Undef(_, _) => true,
-            Term::Hole => true,
-            Term::Var(_, _) => true,
-            Term::Comp(_, _, _, _) => true,
-            Term::Fst(_, _) => true,
-            Term::Snd(_, _) => true,
-            Term::Split(_, _, _, _) => true,
-            Term::App(_, _, _) => true,
-            Term::AppFormula(_, _, _) => true,
-            Term::UnGlueElem(_, _, _) => true,
-            Term::UnGlueElemU(_, _, _, _) => true,
-            Term::IdJ(_, _, _, _, _, _, _) => true,
-            _ => false,
-        }
     }
 }
 
@@ -553,9 +530,6 @@ impl<M> PartialEq for Term<M> {
             (Term::UnGlueElem(t1, sys1, _), Term::UnGlueElem(t2, sys2, _)) => {
                 t1 == t2 && sys1 == sys2
             }
-            (Term::UnGlueElemU(t1, u1, sys1, _), Term::UnGlueElemU(t2, u2, sys2, _)) => {
-                t1 == t2 && u1 == u2 && sys1 == sys2
-            }
             (Term::Id(a1, b1, c1, _), Term::Id(a2, b2, c2, _)) => a1 == a2 && b1 == b2 && c1 == c2,
             (Term::IdPair(t1, sys1, _), Term::IdPair(t2, sys2, _)) => t1 == t2 && sys1 == sys2,
             (Term::IdJ(a1, b1, c1, d1, e1, f1, _), Term::IdJ(a2, b2, c2, d2, e2, f2, _)) => {
@@ -567,3 +541,251 @@ impl<M> PartialEq for Term<M> {
 }
 
 impl<M> Eq for Term<M> {}
+
+#[derive(Clone, PartialEq, Eq)]
+pub struct Closure {
+    pub term_binds: HashTrieMap<Identifier, Entry>,
+    pub formula_binds: HashTrieMap<Identifier, Formula>,
+    pub face: Face,
+}
+
+impl Debug for Closure {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        for (name, e) in self.term_binds.iter() {
+            name.fmt(f)?;
+            write!(f, " - ")?;
+            e.value.fmt(f)?;
+            write!(f, ": ")?;
+            e.tpe.fmt(f)?;
+            write!(f, ", ")?;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug)]
+pub enum Value<M> {
+    Stuck(Term<M>, Closure, M),
+    Pi(Rc<Value<M>>, Rc<Value<M>>, M),
+    App(Rc<Value<M>>, Rc<Value<M>>, M),
+    Var(Identifier, M),
+    U,
+    Sigma(Rc<Value<M>>, Rc<Value<M>>, M),
+    Pair(Rc<Value<M>>, Rc<Value<M>>, M),
+    Fst(Rc<Value<M>>, M),
+    Snd(Rc<Value<M>>, M),
+    Con(Identifier, Vec<Rc<Value<M>>>, M),
+    PCon(Identifier, Rc<Value<M>>, Vec<Rc<Value<M>>>, Vec<Formula>, M),
+    PathP(Rc<Value<M>>, Rc<Value<M>>, Rc<Value<M>>, M),
+    PLam(Identifier, Rc<Value<M>>, M),
+    AppFormula(Rc<Value<M>>, Formula, M),
+    Comp(Rc<Value<M>>, Rc<Value<M>>, System<Value<M>>, M),
+    CompU(Rc<Value<M>>, System<Value<M>>, M),
+    HComp(Rc<Value<M>>, Rc<Value<M>>, System<Value<M>>, M),
+    Glue(Rc<Value<M>>, System<Value<M>>, M),
+    GlueElem(Rc<Value<M>>, System<Value<M>>, M),
+    UnGlueElem(Rc<Value<M>>, System<Value<M>>, M),
+    UnGlueElemU(Rc<Value<M>>, Rc<Value<M>>, System<Value<M>>, M),
+    Id(Rc<Value<M>>, Rc<Value<M>>, Rc<Value<M>>, M),
+    IdPair(Rc<Value<M>>, System<Value<M>>, M),
+    IdJ(
+        Rc<Value<M>>,
+        Rc<Value<M>>,
+        Rc<Value<M>>,
+        Rc<Value<M>>,
+        Rc<Value<M>>,
+        Rc<Value<M>>,
+        M,
+    ),
+}
+
+impl<M> Value<M> {
+    pub fn stuck(term: Term<M>, closure: Closure, meta: M) -> Rc<Self> {
+        Rc::new(Self::Stuck(term, closure, meta))
+    }
+
+    pub fn pi(tpe: &Rc<Self>, a: &Rc<Self>, meta: M) -> Rc<Self> {
+        Rc::new(Self::Pi(Rc::clone(tpe), Rc::clone(a), meta))
+    }
+
+    pub fn app(f: &Rc<Self>, arg: &Rc<Self>, meta: M) -> Rc<Self> {
+        Rc::new(Self::App(Rc::clone(f), Rc::clone(arg), meta))
+    }
+
+    pub fn var(name: Identifier, meta: M) -> Rc<Self> {
+        Rc::new(Self::Var(name, meta))
+    }
+
+    pub fn u() -> Rc<Self> {
+        Rc::new(Self::U)
+    }
+
+    pub fn sigma(tpe: &Rc<Self>, a: &Rc<Self>, meta: M) -> Rc<Self> {
+        Rc::new(Self::Sigma(Rc::clone(tpe), Rc::clone(a), meta))
+    }
+
+    pub fn pair(a: &Rc<Self>, b: &Rc<Self>, meta: M) -> Rc<Self> {
+        Rc::new(Self::Pair(Rc::clone(a), Rc::clone(b), meta))
+    }
+
+    pub fn fst(p: &Rc<Self>, meta: M) -> Rc<Self> {
+        Rc::new(Self::Fst(Rc::clone(p), meta))
+    }
+
+    pub fn snd(p: &Rc<Self>, meta: M) -> Rc<Self> {
+        Rc::new(Self::Snd(Rc::clone(p), meta))
+    }
+
+    pub fn con(name: Identifier, args: Vec<Rc<Self>>, meta: M) -> Rc<Self> {
+        Rc::new(Self::Con(name, args.to_vec(), meta))
+    }
+
+    pub fn pcon(
+        name: Identifier,
+        ty: &Rc<Self>,
+        args: Vec<Rc<Self>>,
+        faces: Vec<Formula>,
+        meta: M,
+    ) -> Rc<Self> {
+        Rc::new(Self::PCon(name, Rc::clone(ty), args.to_vec(), faces, meta))
+    }
+
+    pub fn pathp(a: &Rc<Self>, b: &Rc<Self>, ty: &Rc<Self>, meta: M) -> Rc<Self> {
+        Rc::new(Self::PathP(Rc::clone(a), Rc::clone(b), Rc::clone(ty), meta))
+    }
+
+    pub fn plam(name: Identifier, body: &Rc<Self>, meta: M) -> Rc<Self> {
+        Rc::new(Self::PLam(name, Rc::clone(body), meta))
+    }
+
+    pub fn app_formula(f: &Rc<Self>, formula: Formula, meta: M) -> Rc<Self> {
+        Rc::new(Self::AppFormula(Rc::clone(f), formula, meta))
+    }
+
+    pub fn comp(a: &Rc<Self>, b: &Rc<Self>, system: System<Self>, meta: M) -> Rc<Self> {
+        Rc::new(Self::Comp(Rc::clone(a), Rc::clone(b), system, meta))
+    }
+
+    pub fn comp_u(a: &Rc<Self>, system: System<Self>, meta: M) -> Rc<Self> {
+        Rc::new(Self::CompU(Rc::clone(a), system, meta))
+    }
+
+    pub fn hcomp(a: &Rc<Self>, b: &Rc<Self>, system: System<Self>, meta: M) -> Rc<Self> {
+        Rc::new(Self::HComp(Rc::clone(a), Rc::clone(b), system, meta))
+    }
+
+    pub fn glue(a: &Rc<Self>, system: System<Self>, meta: M) -> Rc<Self> {
+        Rc::new(Self::Glue(Rc::clone(a), system, meta))
+    }
+
+    pub fn glue_elem(a: &Rc<Self>, system: System<Self>, meta: M) -> Rc<Self> {
+        Rc::new(Self::GlueElem(Rc::clone(a), system, meta))
+    }
+
+    pub fn unglue_elem(a: &Rc<Self>, system: System<Self>, meta: M) -> Rc<Self> {
+        Rc::new(Self::UnGlueElem(Rc::clone(a), system, meta))
+    }
+
+    pub fn unglue_elem_u(a: &Rc<Self>, b: &Rc<Self>, system: System<Self>, meta: M) -> Rc<Self> {
+        Rc::new(Self::UnGlueElemU(Rc::clone(a), Rc::clone(b), system, meta))
+    }
+
+    pub fn id(a: &Rc<Self>, x: &Rc<Self>, y: &Rc<Self>, meta: M) -> Rc<Self> {
+        Rc::new(Self::Id(Rc::clone(a), Rc::clone(x), Rc::clone(y), meta))
+    }
+
+    pub fn id_pair(a: &Rc<Self>, system: System<Self>, meta: M) -> Rc<Self> {
+        Rc::new(Self::IdPair(Rc::clone(a), system, meta))
+    }
+
+    pub fn id_j(
+        a: &Rc<Self>,
+        x: &Rc<Self>,
+        y: &Rc<Self>,
+        p: &Rc<Self>,
+        motive: &Rc<Self>,
+        case: &Rc<Self>,
+        meta: M,
+    ) -> Rc<Self> {
+        Rc::new(Self::IdJ(
+            Rc::clone(a),
+            Rc::clone(x),
+            Rc::clone(y),
+            Rc::clone(p),
+            Rc::clone(motive),
+            Rc::clone(case),
+            meta,
+        ))
+    }
+
+    pub fn is_neutral(&self) -> bool {
+        match self {
+            Value::Stuck(Term::Undef(_, _), _, _) => true,
+            Value::Stuck(Term::Hole, _, _) => true,
+            Value::Var(_, _) => true,
+            Value::Comp(_, _, _, _) => true,
+            Value::Fst(_, _) => true,
+            Value::Snd(_, _) => true,
+            Value::App(_, _, _) => true,
+            Value::AppFormula(_, _, _) => true,
+            Value::UnGlueElem(_, _, _) => true,
+            Value::UnGlueElemU(_, _, _, _) => true,
+            Value::IdJ(_, _, _, _, _, _, _) => true,
+            _ => false,
+        }
+    }
+}
+
+impl<M> PartialEq for Value<M> {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Value::Stuck(t1, c1, _), Value::Stuck(t2, c2, _)) => t1 == t2 && c1 == c2,
+            (Value::Pi(t1, a1, _), Value::Pi(t2, a2, _)) => a1 == a2 && t1 == t2,
+            (Value::App(f1, arg1, _), Value::App(f2, arg2, _)) => f1 == f2 && arg1 == arg2,
+            (Value::Var(n1, _), Value::Var(n2, _)) => n1 == n2,
+            (Value::U, Value::U) => true,
+            (Value::Sigma(t1, a1, _), Value::Sigma(t2, a2, _)) => a1 == a2 && t1 == t2,
+            (Value::Pair(a1, b1, _), Value::Pair(a2, b2, _)) => a1 == a2 && b1 == b2,
+            (Value::Fst(p1, _), Value::Fst(p2, _)) => p1 == p2,
+            (Value::Snd(p1, _), Value::Snd(p2, _)) => p1 == p2,
+            (Value::Con(n1, args1, _), Value::Con(n2, args2, _)) => n1 == n2 && args1 == args2,
+            (Value::PCon(n1, ty1, args1, faces1, _), Value::PCon(n2, ty2, args2, faces2, _)) => {
+                n1 == n2 && ty1 == ty2 && args1 == args2 && faces1 == faces2
+            }
+            (Value::PathP(a1, b1, ty1, _), Value::PathP(a2, b2, ty2, _)) => {
+                a1 == a2 && b1 == b2 && ty1 == ty2
+            }
+            (Value::PLam(n1, b1, _), Value::PLam(n2, b2, _)) => n1 == n2 && b1 == b2,
+            (Value::AppFormula(f1, form1, _), Value::AppFormula(f2, form2, _)) => {
+                f1 == f2 && form1 == form2
+            }
+            (Value::Comp(a1, b1, sys1, _), Value::Comp(a2, b2, sys2, _)) => {
+                a1 == a2 && b1 == b2 && sys1 == sys2
+            }
+            (Value::CompU(a1, sys1, _), Value::CompU(a2, sys2, _)) => a1 == a2 && sys1 == sys2,
+            (Value::HComp(a1, b1, sys1, _), Value::HComp(a2, b2, sys2, _)) => {
+                a1 == a2 && b1 == b2 && sys1 == sys2
+            }
+            (Value::Glue(a1, sys1, _), Value::Glue(a2, sys2, _)) => a1 == a2 && sys1 == sys2,
+            (Value::GlueElem(a1, sys1, _), Value::GlueElem(a2, sys2, _)) => {
+                a1 == a2 && sys1 == sys2
+            }
+            (Value::UnGlueElem(a1, sys1, _), Value::UnGlueElem(a2, sys2, _)) => {
+                a1 == a2 && sys1 == sys2
+            }
+            (Value::UnGlueElemU(a1, b1, sys1, _), Value::UnGlueElemU(a2, b2, sys2, _)) => {
+                a1 == a2 && b1 == b2 && sys1 == sys2
+            }
+            (Value::Id(a1, x1, y1, _), Value::Id(a2, x2, y2, _)) => {
+                a1 == a2 && x1 == x2 && y1 == y2
+            }
+            (Value::IdPair(a1, sys1, _), Value::IdPair(a2, sys2, _)) => a1 == a2 && sys1 == sys2,
+            (Value::IdJ(a1, x1, y1, p1, m1, c1, _), Value::IdJ(a2, x2, y2, p2, m2, c2, _)) => {
+                a1 == a2 && x1 == x2 && y1 == y2 && p1 == p2 && m1 == m2 && c1 == c2
+            }
+            _ => false,
+        }
+    }
+}
+
+impl<M> Eq for Value<M> {}

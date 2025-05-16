@@ -13,6 +13,8 @@ criterion = { version = "0.5.1", features = ["html_reports"] }
 name = "arith"
 harness = false
 
+[profile.bench]
+debug = true
 
 [dependencies]
 lalrpop-util = { version = "0.22.1", features = ["lexer", "unicode"] }

@@ -61,7 +61,7 @@ impl<D: Demangler> ProgressNotifier for CliNotifier<D> {
     fn decl_check_started(&self, decl_name: &Identifier) {
         let bar = Spinner::with_timer(
             Spinners::Clock,
-            format!("Checking {}...", self.demangler.demangle(decl_name)),
+            format!(" - Checking {}...", self.demangler.demangle(decl_name)),
         );
 
         let mut spinners = self.spinners.lock().unwrap();
@@ -90,11 +90,11 @@ fn main() {
 
         let (modules, names) = resolve_modules(deps).unwrap();
 
+        let modules = mark_erased(&modules);
+
         let progress = Rc::new(CliNotifier::new(names));
 
         let mut ctx = TypeContext::new(progress);
-
-        let modules = mark_erased(&modules);
 
         for set in modules.iter() {
             ctx = check_declaration_set(&ctx, set).unwrap();

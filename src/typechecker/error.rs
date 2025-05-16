@@ -1,15 +1,27 @@
-use crate::ctt::term::Identifier;
+use crate::ctt::term::{Identifier, System};
+use crate::precise::term::{Term, Value};
 use std::backtrace::Backtrace;
 use std::error::Error;
 use std::fmt::{Debug, Display, Formatter};
+use std::rc::Rc;
 
 #[derive(Clone, Debug)]
 pub enum ErrorCause {
+    UnexpectedTypeInfered {
+        term: Rc<Term>,
+        expected: Rc<Value>,
+        infered: Rc<Value>,
+    },
+    ExpectedDataType(Rc<Value>),
+    ExpectedSigma(Rc<Value>),
+    UnEqInIdSystem(Rc<Value>, Rc<Value>),
     UnknownTermName(Identifier),
     Hole,
     UnknownNameInSystem,
     UnknownInterval,
     MissingBranch,
+    WrongPathEnd((Rc<Value>, Rc<Value>), (Rc<Value>, Rc<Value>)),
+    UneqInHSumSplit(System<Value>, System<Value>),
 }
 
 pub struct TypeError {

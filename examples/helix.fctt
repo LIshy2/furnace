@@ -209,10 +209,5 @@ module helix where
   invS1 (x : S1) : S1 = invMult x base;
   lemInvS1 : Path S1 (invS1 base) base = < i > comp (< _ > S1) (comp (< _ > S1) base [(i = 1) -> refl S1 base]) [(i = 1) -> refl S1 base];
   loopInvS1 : U = Path S1 (invS1 base) (invS1 base);
-  rePar (l : loopInvS1) : loopS1 = transport (< i > Path S1 (lemInvS1 @ i) (lemInvS1 @ i)) l;
-  test2 : Z = winding (rePar (< i > invS1 (loop2 @ i)));
-  test21 : Z = winding (rePar (< i > invS1 (compS1 loop2 loop1 @ i)));
-  test12 : Z = winding (rePar (< i > invS1 (compS1 loop1 loop2 @ i)));
-  test4 : Z = winding (rePar (< i > invS1 (compS1 loop2 loop2 @ i)));
-  test0 : Z = winding (rePar (< i > invMult (loop2 @ i) (loop2 @ i)))
+  rePar (l : loopInvS1) : loopS1 = transport (< i > Path S1 (lemInvS1 @ i) (lemInvS1 @ i)) l
 }

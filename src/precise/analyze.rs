@@ -41,7 +41,6 @@ pub enum PreTerm {
     Glue(Rc<PreTerm>, System<PreTerm>, SimpleType),
     GlueElem(Rc<PreTerm>, System<PreTerm>, SimpleType),
     UnGlueElem(Rc<PreTerm>, System<PreTerm>, SimpleType),
-    UnGlueElemU(Rc<PreTerm>, Rc<PreTerm>, System<PreTerm>, SimpleType),
     Id(Rc<PreTerm>, Rc<PreTerm>, Rc<PreTerm>, SimpleType),
     IdPair(Rc<PreTerm>, System<PreTerm>, SimpleType),
     IdJ(
@@ -84,7 +83,6 @@ impl PreTerm {
             PreTerm::Glue(_, _, m) => m.clone(),
             PreTerm::GlueElem(_, _, m) => m.clone(),
             PreTerm::UnGlueElem(_, _, m) => m.clone(),
-            PreTerm::UnGlueElemU(_, _, _, m) => m.clone(),
             PreTerm::Id(_, _, _, m) => m.clone(),
             PreTerm::IdPair(_, _, m) => m.clone(),
             PreTerm::IdJ(_, _, _, _, _, _, m) => m.clone(),
@@ -114,16 +112,13 @@ fn analyze(ctx: &mut Constraints, t: &Rc<CttTerm<()>>) -> Rc<PreTerm> {
             ctx.add(a, arg_type.clone());
             let bod_t = analyze(ctx, b);
             let bod_type = bod_t.tpe();
-            Rc::new(PreTerm::Lam(
-                *a,
-                arg_t,
-                bod_t,
-                SimpleType::Fun(Box::new(arg_type), Box::new(bod_type)),
-            ))
+            Rc::new(PreTerm::Lam(*a, arg_t, bod_t, bod_type))
         }
-        CttTerm::Where(_, _, _) => {
-            todo!()
-        }
+        CttTerm::Where(e, ds, _) => Rc::new(PreTerm::Where(
+            analyze(ctx, e),
+            analyze_all(ctx, &vec![ds.clone()]).pop().unwrap(),
+            SimpleType::Strict,
+        )),
         CttTerm::Var(n, _) => Rc::new(PreTerm::Var(*n, ctx.get(n))),
         CttTerm::U => Rc::new(PreTerm::U),
         CttTerm::Sigma(si, _) => {
@@ -159,13 +154,7 @@ fn analyze(ctx: &mut Constraints, t: &Rc<CttTerm<()>>) -> Rc<PreTerm> {
                 ctx.unify(&f.tpe(), &fresh);
             }
 
-            Rc::new(PreTerm::PCon(
-                *n,
-                analyze(ctx, t),
-                fs,
-                i.clone(),
-                fresh,
-            ))
+            Rc::new(PreTerm::PCon(*n, analyze(ctx, t), fs, i.clone(), fresh))
         }
         CttTerm::Split(n, t, b, _) => {
             let mut tpe_vars = vec![];
@@ -200,12 +189,7 @@ fn analyze(ctx: &mut Constraints, t: &Rc<CttTerm<()>>) -> Rc<PreTerm> {
                 ctx.unify(&o.clone(), &t.clone())
             }
 
-            Rc::new(PreTerm::Split(
-                *n,
-                analyze(ctx, t),
-                b,
-                SimpleType::Fun(Box::new(o.clone()), Box::new(o)),
-            ))
+            Rc::new(PreTerm::Split(*n, analyze(ctx, t), b, o))
         }
         CttTerm::Sum(n, ls, _) => {
             let ls = ls
@@ -283,7 +267,38 @@ fn analyze(ctx: &mut Constraints, t: &Rc<CttTerm<()>>) -> Rc<PreTerm> {
             analyze_system(ctx, es),
             SimpleType::Strict,
         )),
-        _ => todo!(),
+        CttTerm::Fill(term, term1, system, _) => Rc::new(PreTerm::Fill(
+            analyze(ctx, term),
+            analyze(ctx, term1),
+            analyze_system(ctx, system),
+            SimpleType::Strict,
+        )),
+        CttTerm::HComp(term, term1, system, _) => Rc::new(PreTerm::HComp(
+            analyze(ctx, term),
+            analyze(ctx, term1),
+            analyze_system(ctx, system),
+            SimpleType::Strict,
+        )),
+        CttTerm::Id(term, term1, term2, _) => Rc::new(PreTerm::Id(
+            analyze(ctx, term),
+            analyze(ctx, term1),
+            analyze(ctx, term2),
+            SimpleType::Strict,
+        )),
+        CttTerm::IdPair(term, system, _) => Rc::new(PreTerm::IdPair(
+            analyze(ctx, term),
+            analyze_system(ctx, system),
+            SimpleType::Strict,
+        )),
+        CttTerm::IdJ(term, term1, term2, term3, term4, term5, _) => Rc::new(PreTerm::IdJ(
+            analyze(ctx, term),
+            analyze(ctx, term1),
+            analyze(ctx, term2),
+            analyze(ctx, term3),
+            analyze(ctx, term4),
+            analyze(ctx, term5),
+            SimpleType::Strict,
+        )),
     }
 }
 
@@ -439,11 +454,9 @@ pub fn finalize_term(ctx: &mut Constraints, t: &Rc<PreTerm>) -> Rc<Term> {
             finalize_term(ctx, c),
             finalize_mod(ctx, t),
         )),
-        PreTerm::PLam(i, b, t) => Rc::new(Term::PLam(
-            *i,
-            finalize_term(ctx, b),
-            finalize_mod(ctx, t),
-        )),
+        PreTerm::PLam(i, b, t) => {
+            Rc::new(Term::PLam(*i, finalize_term(ctx, b), finalize_mod(ctx, t)))
+        }
         PreTerm::AppFormula(f, a, t) => Rc::new(Term::AppFormula(
             finalize_term(ctx, f),
             a.clone(),
@@ -482,7 +495,33 @@ pub fn finalize_term(ctx: &mut Constraints, t: &Rc<PreTerm>) -> Rc<Term> {
             finalize_system(ctx, es),
             finalize_mod(ctx, t),
         )),
-        _ => panic!("UUUUUUU"),
+        PreTerm::Where(e, declaration_set, t) => Rc::new(Term::Where(
+            finalize_term(ctx, e),
+            finalize_all(ctx, &vec![declaration_set.clone()])
+                .pop()
+                .unwrap(),
+            finalize_mod(ctx, t),
+        )),
+        PreTerm::Id(t1, t2, t3, t) => Rc::new(Term::Id(
+            finalize_term(ctx, t1),
+            finalize_term(ctx, t2),
+            finalize_term(ctx, t3),
+            finalize_mod(ctx, t),
+        )),
+        PreTerm::IdPair(t1, sys, t) => Rc::new(Term::IdPair(
+            finalize_term(ctx, t1),
+            finalize_system(ctx, sys),
+            finalize_mod(ctx, t),
+        )),
+        PreTerm::IdJ(t1, t2, t3, t4, t5, t6, t) => Rc::new(Term::IdJ(
+            finalize_term(ctx, t1),
+            finalize_term(ctx, t2),
+            finalize_term(ctx, t3),
+            finalize_term(ctx, t4),
+            finalize_term(ctx, t5),
+            finalize_term(ctx, t6),
+            finalize_mod(ctx, t),
+        )),
     }
 }
 

@@ -1,4 +1,4 @@
-use crate::ctt::term::Term as CttTerm;
+use crate::ctt::term::{Term as CttTerm, Value as CttValue};
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Mod {
@@ -8,6 +8,7 @@ pub enum Mod {
 }
 
 pub type Term = CttTerm<Mod>;
+pub type Value = CttValue<Mod>;
 
 impl Term {
     pub fn mode(&self) -> Mod {
@@ -38,7 +39,6 @@ impl Term {
             Term::Glue(_, _, m) => m.clone(),
             Term::GlueElem(_, _, m) => m.clone(),
             Term::UnGlueElem(_, _, m) => m.clone(),
-            Term::UnGlueElemU(_, _, _, m) => m.clone(),
             Term::Id(_, _, _, m) => m.clone(),
             Term::IdPair(_, _, m) => m.clone(),
             Term::IdJ(_, _, _, _, _, _, m) => m.clone(),

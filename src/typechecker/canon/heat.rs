@@ -1,17 +1,17 @@
-use crate::precise::term::Term;
+use crate::precise::term::Value;
 use std::rc::Rc;
 
 #[derive(Debug)]
 struct Path {
-    begin: Rc<Term>,
-    end: Rc<Term>,
+    begin: Rc<Value>,
+    end: Rc<Value>,
 }
 
-fn term_size(t: &Rc<Term>) -> usize {
+fn term_size(t: &Rc<Value>) -> usize {
     match t.as_ref() {
-        Term::U => size_of::<Term>(),
-        Term::Pair(fst, snd, _) => term_size(fst) + term_size(snd),
-        Term::Con(_, v, _) => size_of::<Term>() + v.iter().map(term_size).sum::<usize>(),
+        Value::U => size_of::<Value>(),
+        Value::Pair(fst, snd, _) => term_size(fst) + term_size(snd),
+        Value::Con(_, v, _) => size_of::<Value>() + v.iter().map(term_size).sum::<usize>(),
         _ => panic!("NOT HIT ELEMENT"),
     }
 }
@@ -20,14 +20,18 @@ pub struct PathIndex {
     paths: Vec<Path>,
 }
 
+impl Default for PathIndex {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PathIndex {
     pub fn new() -> PathIndex {
         PathIndex { paths: vec![] }
     }
-    pub fn add(&mut self, p1: &Rc<Term>, p2: &Rc<Term>) {
-        if self.paths.iter().any(|p| &p.begin == p1)
-            && self.paths.iter().any(|p| &p.begin == p2)
-        {
+    pub fn add(&mut self, p1: &Rc<Value>, p2: &Rc<Value>) {
+        if self.paths.iter().any(|p| &p.begin == p1) && self.paths.iter().any(|p| &p.begin == p2) {
             return;
         }
         let (begin, end) = if term_size(p1) > term_size(p2) {
@@ -61,7 +65,7 @@ impl PathIndex {
         });
     }
 
-    pub fn find_optimal_form(&self, t: &Term) -> Option<Rc<Term>> {
+    pub fn find_optimal_form(&self, t: &Value) -> Option<Rc<Value>> {
         for p in &self.paths {
             if p.begin.as_ref() == t {
                 return Some(p.end.clone());
@@ -70,11 +74,11 @@ impl PathIndex {
         None
     }
 
-    pub fn compact(&self, t: &Rc<Term>) -> Rc<Term> {
+    pub fn compact(&self, t: &Rc<Value>) -> Rc<Value> {
         match t.as_ref() {
-            Term::Con(n, cs, m) => {
+            Value::Con(n, cs, m) => {
                 let ccs = cs.iter().map(|f| self.compact(f)).collect();
-                let ut = Term::Con(*n, ccs, m.clone());
+                let ut = Value::Con(*n, ccs, m.clone());
                 if let Some(res) = self.find_optimal_form(&ut) {
                     res
                 } else {

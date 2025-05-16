@@ -2,7 +2,7 @@ use std::{collections::HashMap, rc::Rc};
 
 use crate::{
     ctt::term::{Branch, Dir, Formula, System},
-    precise::term::{Mod, Term},
+    precise::term::{Mod, Term, Value},
     typechecker::{
         context::TypeContext,
         error::{ErrorCause, TypeError},
@@ -15,34 +15,39 @@ use super::{
     nominal::{border, Facing, Nominal},
 };
 
-pub fn app(ctx: &TypeContext, fun: &Rc<Term>, arg: &Rc<Term>) -> Result<Rc<Term>, TypeError> {
+pub fn app(ctx: &TypeContext, fun: &Rc<Value>, arg: &Rc<Value>) -> Result<Rc<Value>, TypeError> {
+    // println!("app/// {:?} {:?}", fun, arg);
     match (fun.as_ref(), arg.as_ref()) {
-        (Term::Lam(x, tpe, body, _), _) => {
-            let new_ctx = ctx.with_term(x, arg, tpe);
-            eval(&new_ctx, body)
+        (Value::Stuck(Term::Lam(x, tpe, body, _), e, _), _) => {
+            let lambda_ctx = ctx.in_closure(e);
+            let body_ctx = lambda_ctx.with_term(x, arg, &eval(&lambda_ctx, tpe)?);
+            eval(&body_ctx, body)
         }
-        (Term::Split(_, ty, branches, _), Term::Con(c, vs, _)) => {
+        (Value::Stuck(Term::Split(_, ty, branches, _), se, _), Value::Con(c, vs, _)) => {
             let branch = branches
                 .iter()
                 .find(|b| &b.name() == c)
                 .ok_or(ErrorCause::Hole)?;
 
-            let Term::Pi(lam, _) = ty.as_ref() else {
+            let split_tpe = eval(&ctx.in_closure(se), ty)?;
+            let Value::Pi(data_tpe, lam, _) = split_tpe.as_ref() else {
                 Err(ErrorCause::Hole)?
             };
 
-            let Term::Lam(_, data_tpe, _, _) = lam.as_ref() else {
+            let Value::Stuck(Term::Lam(_, _, _, _), e, _) = lam.as_ref() else {
                 Err(ErrorCause::Hole)?
             };
 
-            let (Term::Sum(_, labels, _) | Term::HSum(_, labels, _)) = data_tpe.as_ref() else {
-                Err(ErrorCause::Hole)?
+            let Value::Stuck(Term::Sum(_, labels, _) | Term::HSum(_, labels, _), de, _) =
+                data_tpe.as_ref()
+            else {
+                Err(ErrorCause::ExpectedDataType(lam.clone()))?
             };
 
             match branch {
                 Branch::OBranch(c, xs, t) => {
-                    let mut body_ctx = ctx.clone();
-                    let mut tpe_ctx = ctx.clone();
+                    let mut body_ctx = ctx.in_closure(se).in_closure(de);
+                    let mut tpe_ctx = ctx.in_closure(e).in_closure(de).clone();
 
                     let label = labels.iter().find(|l| &l.name() == c).unwrap();
                     let tele = label.telescope();
@@ -56,28 +61,31 @@ pub fn app(ctx: &TypeContext, fun: &Rc<Term>, arg: &Rc<Term>) -> Result<Rc<Term>
                 Branch::PBranch(_, _, _, _) => Err(ErrorCause::Hole)?,
             }
         }
-        (Term::Split(_, ty, branches, _), Term::PCon(c, _, us, phis, _)) => {
+        (Value::Stuck(Term::Split(_, ty, branches, _), se, _), Value::PCon(c, _, us, phis, _)) => {
             let branch = branches
                 .iter()
                 .find(|b| &b.name() == c)
                 .ok_or(ErrorCause::Hole)?;
 
-            let Term::Pi(lam, _) = ty.as_ref() else {
+            let split_tpe = eval(&ctx.in_closure(se), ty)?;
+            let Value::Pi(data_tpe, lam, _) = split_tpe.as_ref() else {
                 Err(ErrorCause::Hole)?
             };
 
-            let Term::Lam(_, data_tpe, _, _) = lam.as_ref() else {
+            let Value::Stuck(Term::Lam(_, _, _, _), e, _) = lam.as_ref() else {
                 Err(ErrorCause::Hole)?
             };
 
-            let (Term::Sum(_, labels, _) | Term::HSum(_, labels, _)) = data_tpe.as_ref() else {
-                Err(ErrorCause::Hole)?
+            let Value::Stuck(Term::Sum(_, labels, _) | Term::HSum(_, labels, _), de, _) =
+                data_tpe.as_ref()
+            else {
+                Err(ErrorCause::ExpectedDataType(lam.clone()))?
             };
 
             match branch {
                 Branch::PBranch(_, xs, is, t) => {
-                    let mut body_ctx = ctx.clone();
-                    let mut tpe_ctx = ctx.clone();
+                    let mut body_ctx = ctx.in_closure(se).in_closure(de);
+                    let mut tpe_ctx = ctx.in_closure(e).in_closure(de).clone();
 
                     let label = labels.iter().find(|l| &l.name() == c).unwrap();
                     let tele = label.telescope();
@@ -95,22 +103,22 @@ pub fn app(ctx: &TypeContext, fun: &Rc<Term>, arg: &Rc<Term>) -> Result<Rc<Term>
                 Branch::OBranch(_, _, _) => Err(ErrorCause::Hole)?,
             }
         }
-        (Term::Split(_, ty, _, _), Term::HComp(a, w, ws, _)) => {
-            let obj = eval(ctx, ty)?;
+        (Value::Stuck(Term::Split(_, ty, _, _), e, _), Value::HComp(a, w, ws, _)) => {
+            let obj = eval(&ctx.in_closure(e), ty)?;
             match obj.as_ref() {
-                Term::Pi(lam, _) => {
+                Value::Pi(_, lam, _) => {
                     let j = ctx.fresh();
                     let wsj = ws
                         .iter()
                         .map(|(f, v)| Ok((f.clone(), app_formula(ctx, v, Formula::Atom(j))?)))
-                        .collect::<Result<_, TypeError>>()?;
+                        .collect::<Result<System<Value>, TypeError>>()?;
                     let w_ = app(ctx, fun, w)?;
-                    let ws_ = ws
+                    let ws_ = wsj
                         .iter()
                         .map(|(alpha, t_alpha)| {
                             Ok((alpha.clone(), app(ctx, &fun.face(ctx, alpha)?, t_alpha)?))
                         })
-                        .collect::<Result<_, TypeError>>()?;
+                        .collect::<Result<System<Value>, TypeError>>()?;
                     comp(
                         ctx,
                         &j,
@@ -122,20 +130,22 @@ pub fn app(ctx: &TypeContext, fun: &Rc<Term>, arg: &Rc<Term>) -> Result<Rc<Term>
                 _ => Err(ErrorCause::Hole)?,
             }
         }
-        (Term::Split(_, _, _, m), v) if v.is_neutral() => Ok(Term::app(fun, arg, m.clone())),
-        (Term::Comp(plam, li0, ts, _), _) => {
-            let Term::PLam(i, pi, _) = plam.as_ref() else {
+        (Value::Stuck(Term::Split(_, _, _, m), _, _), v) if v.is_neutral() => {
+            Ok(Value::app(fun, arg, m.clone()))
+        }
+        (Value::Comp(plam, li0, ts, _), _) => {
+            let Value::PLam(i, pi, _) = plam.as_ref() else {
                 Err(ErrorCause::Hole)?
             };
-            let Term::Pi(f, _) = pi.as_ref() else {
+            let Value::Pi(va, f, _) = pi.as_ref() else {
                 Err(ErrorCause::Hole)?
             };
-            let Term::Lam(_, a, _, _) = f.as_ref() else {
+            let Value::Stuck(Term::Lam(_, _, _, _), e, _) = f.as_ref() else {
                 Err(ErrorCause::Hole)?
             };
             let j = ctx.fresh();
             let ctx = ctx.with_formula(&j, Formula::Atom(j));
-            let (aj, fj) = (a.swap(i, &j), f.swap(i, &j));
+            let (aj, fj) = (va.swap(i, &j), f.swap(i, &j));
             let tsj = ts
                 .iter()
                 .map(|(f, v)| Ok((f.clone(), app_formula(&ctx, v, Formula::Atom(j))?)))
@@ -157,9 +167,9 @@ pub fn app(ctx: &TypeContext, fun: &Rc<Term>, arg: &Rc<Term>) -> Result<Rc<Term>
                 &System::from(m),
             )
         }
-        _ if fun.is_neutral() => Ok(Term::app(fun, arg, Mod::Precise)),
+        _ if fun.is_neutral() => Ok(Value::app(fun, arg, Mod::Precise)),
         _ => {
-            println!("fail {:?} {:?}", fun, arg);
+            println!("fail {:?}", arg);
             Err(ErrorCause::Hole)?
         }
     }
@@ -167,65 +177,68 @@ pub fn app(ctx: &TypeContext, fun: &Rc<Term>, arg: &Rc<Term>) -> Result<Rc<Term>
 
 pub fn app_formula(
     ctx: &TypeContext,
-    term: &Rc<Term>,
+    term: &Rc<Value>,
     formula: Formula,
-) -> Result<Rc<Term>, TypeError> {
+) -> Result<Rc<Value>, TypeError> {
     match term.as_ref() {
-        Term::PLam(i, u, _) => u.act(ctx, i, formula),
-        Term::Hole => Ok(Term::app_formula(term, formula, Mod::Precise)),
+        Value::PLam(i, u, _) => u.act(ctx, i, formula),
+        Value::Stuck(Term::Hole, _, _) => Ok(Value::app_formula(term, formula, Mod::Precise)),
         v if v.is_neutral() => {
-            let tpe = infer_neutral(ctx, term)?;
+            let tpe = infer_value(ctx, term)?;
             match (tpe.as_ref(), formula) {
-                (Term::PathP(_, a0, _, _), Formula::Dir(Dir::Zero)) => Ok(a0.clone()),
-                (Term::PathP(_, _, a1, _), Formula::Dir(Dir::One)) => Ok(a1.clone()),
-                (_, phi) => Ok(Term::app_formula(term, phi, Mod::Precise)),
+                (Value::PathP(_, a0, _, _), Formula::Dir(Dir::Zero)) => Ok(a0.clone()),
+                (Value::PathP(_, _, a1, _), Formula::Dir(Dir::One)) => Ok(a1.clone()),
+                (_, phi) => Ok(Value::app_formula(term, phi, Mod::Precise)),
             }
         }
         e => Err(ErrorCause::Hole)?,
     }
 }
 
-fn infer_neutral(ctx: &TypeContext, v: &Rc<Term>) -> Result<Rc<Term>, TypeError> {
+pub fn infer_value(ctx: &TypeContext, v: &Rc<Value>) -> Result<Rc<Value>, TypeError> {
     match v.as_ref() {
-        Term::Var(name, _) => Ok(ctx.lookup_term(name).ok_or(ErrorCause::Hole)?.tpe),
-        Term::Undef(t, _) => eval(ctx, t),
-        Term::Fst(t, _) => {
-            let res = infer_neutral(ctx, t)?;
+        Value::Var(name, _) => Ok(ctx
+            .lookup_term(name)
+            .ok_or(ErrorCause::UnknownTermName(*name))?
+            .tpe),
+        Value::Stuck(Term::Undef(t, _), e, _) => eval(&ctx.in_closure(e), t),
+        Value::Fst(t, _) => {
+            let res = infer_value(ctx, t)?;
             match res.as_ref() {
-                Term::Sigma(lam, _) => {
-                    let Term::Lam(_, tpe, _, _) = lam.as_ref() else {
+                Value::Sigma(va, lam, _) => {
+                    let Value::Stuck(Term::Lam(_, _, _, _), e, _) = lam.as_ref() else {
                         Err(ErrorCause::Hole)?
                     };
-                    Ok(tpe.clone())
+                    Ok(va.clone())
                 }
                 _ => Err(ErrorCause::Hole)?,
             }
         }
-        Term::Snd(t, _) => {
-            let res = infer_neutral(ctx, t)?;
+        Value::Snd(t, _) => {
+            let res = infer_value(ctx, t)?;
             match res.as_ref() {
-                Term::Sigma(lam, _) => Ok(app(ctx, lam, &Term::fst(t, Mod::Precise))?),
+                Value::Sigma(_, lam, _) => Ok(app(ctx, lam, &Value::fst(t, Mod::Precise))?),
+                _ => Err(ErrorCause::ExpectedSigma(res))?,
+            }
+        }
+        Value::App(t0, t1, _) => {
+            let res = infer_value(ctx, t0)?;
+            match res.as_ref() {
+                Value::Pi(_, lam, _) => Ok(app(ctx, lam, t1)?),
                 _ => Err(ErrorCause::Hole)?,
             }
         }
-        Term::App(t0, t1, _) => {
-            let res = infer_neutral(ctx, t0)?;
+        Value::Stuck(Term::Split(_, t, _, _), e, _) => eval(&ctx.in_closure(e), t),
+        Value::AppFormula(t, phi, _) => {
+            let res = infer_value(ctx, t)?;
             match res.as_ref() {
-                Term::Pi(lam, _) => Ok(app(ctx, lam, t1)?),
+                Value::PathP(a, _, _, _) => app_formula(ctx, a, phi.clone()),
                 _ => Err(ErrorCause::Hole)?,
             }
         }
-        Term::Split(_, t, _, _) => Ok(t.clone()),
-        Term::AppFormula(t, phi, _) => {
-            let res = infer_neutral(ctx, t)?;
-            match res.as_ref() {
-                Term::PathP(a, _, _, _) => app_formula(ctx, a, phi.clone()),
-                _ => Err(ErrorCause::Hole)?,
-            }
-        }
-        Term::Comp(a, _, _, _) => app_formula(ctx, a, Formula::Dir(Dir::One)),
-        Term::UnGlueElemU(_, b, _, _) => Ok(b.clone()),
-        Term::IdJ(_, _, c, _, x, p, _) => app(ctx, &app(ctx, c, x)?, p),
-        _ => panic!("NOT VALUE {:?}", v),
+        Value::Comp(a, _, _, _) => app_formula(ctx, a, Formula::Dir(Dir::One)),
+        Value::UnGlueElemU(_, b, _, _) => Ok(b.clone()),
+        Value::IdJ(_, _, c, _, x, p, _) => app(ctx, &app(ctx, c, x)?, p),
+        _ => panic!("NOT VALUE {:?}", &format!("{:?}", v)),
     }
 }

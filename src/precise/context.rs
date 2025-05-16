@@ -36,7 +36,8 @@ impl Constraints {
     }
 
     pub fn get(&self, name: &Identifier) -> SimpleType {
-        self.binds[name].clone()
+        SimpleType::Strict
+        // self.binds[name].clone()
     }
 
     pub fn add(&mut self, n: &Identifier, t: SimpleType) {
@@ -65,6 +66,7 @@ impl Constraints {
     }
 
     pub fn unify(&mut self, t1: &SimpleType, t2: &SimpleType) {
+        return;
         let t1 = self.apply(t1);
         let t2 = self.apply(t2);
         match (&t1, &t2) {
