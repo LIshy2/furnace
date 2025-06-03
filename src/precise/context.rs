@@ -1,54 +1,60 @@
 use crate::ctt::term::Identifier;
 use std::collections::HashMap;
 
-pub struct Constraints {
-    subs: HashMap<usize, SimpleType>,
-    binds: HashMap<Identifier, SimpleType>,
+#[derive(Copy, Clone, Debug)]
+pub enum Tag {
+    Var(usize),
+    Precise,
+}
+
+pub struct PreciseContext {
+    subs: HashMap<usize, Tag>,
+    binds: HashMap<Identifier, Tag>,
     last_id: usize,
 }
 
-#[derive(Clone, Debug)]
-pub enum SimpleType {
-    Var(usize),
-    Strict,
-    Fun(Box<SimpleType>, Box<SimpleType>),
-}
-
-impl Default for Constraints {
+impl Default for PreciseContext {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl Constraints {
-    pub fn new() -> Constraints {
-        Constraints {
-            subs: Default::default(),
+impl PreciseContext {
+    pub fn new() -> PreciseContext {
+        PreciseContext {
+            subs: HashMap::from([(0, Tag::Var(0))]),
             binds: Default::default(),
-            last_id: 0,
+            last_id: 1,
         }
     }
-    pub fn fresh(&mut self) -> SimpleType {
+    pub fn fresh(&mut self) -> Tag {
         self.last_id += 1;
-        self.subs
-            .insert(self.last_id, SimpleType::Var(self.last_id));
-        SimpleType::Var(self.last_id)
+        self.subs.insert(self.last_id, Tag::Var(self.last_id));
+        Tag::Var(self.last_id)
     }
 
-    pub fn get(&self, name: &Identifier) -> SimpleType {
-        SimpleType::Strict
-        // self.binds[name].clone()
+    pub fn get(&self, name: &Identifier) -> Tag {
+        // println!("{:?}", name);
+        self.binds
+            .get(name)
+            .expect(&format!("unfound {:?}", name))
+            .clone()
     }
 
-    pub fn add(&mut self, n: &Identifier, t: SimpleType) {
+    pub fn add(&mut self, n: &Identifier, t: Tag) {
         self.binds.insert(*n, t);
     }
 
-    pub fn apply(&self, t: &SimpleType) -> SimpleType {
+    pub fn apply(&self, t: &Tag) -> Tag {
         match t {
-            SimpleType::Var(name) => {
-                let s = &self.subs[name].clone();
-                if let SimpleType::Var(next_name) = &s {
+            Tag::Var(name) => {
+                // println!("{:?}", name);
+                let s = &self
+                    .subs
+                    .get(name)
+                    .expect(&format!("unfound {}", name))
+                    .clone();
+                if let Tag::Var(next_name) = &s {
                     if next_name == name {
                         s.clone()
                     } else {
@@ -58,34 +64,23 @@ impl Constraints {
                     self.apply(s)
                 }
             }
-            SimpleType::Strict => SimpleType::Strict,
-            SimpleType::Fun(a, r) => {
-                SimpleType::Fun(Box::new(self.apply(a)), Box::new(self.apply(r)))
-            }
+            Tag::Precise => Tag::Precise,
         }
     }
 
-    pub fn unify(&mut self, t1: &SimpleType, t2: &SimpleType) {
-        return;
+    pub fn unify(&mut self, t1: &Tag, t2: &Tag) {
         let t1 = self.apply(t1);
         let t2 = self.apply(t2);
         match (&t1, &t2) {
-            (SimpleType::Var(name1), SimpleType::Var(name2)) if name1 == name2 => (),
-            (SimpleType::Strict, SimpleType::Strict) => (),
-            (SimpleType::Strict, SimpleType::Fun(_, _)) => (),
-            (SimpleType::Fun(_, _), SimpleType::Strict) => (),
-            (SimpleType::Var(name), _) => {
+            (Tag::Var(name1), Tag::Var(name2)) if name1 == name2 => (),
+            (Tag::Precise, Tag::Precise) => (),
+            (Tag::Var(name), _) => {
                 self.subs.insert(*name, t2.clone());
             }
 
-            (_, SimpleType::Var(name)) => {
+            (_, Tag::Var(name)) => {
                 self.subs.insert(*name, t1.clone());
             }
-            (SimpleType::Fun(in1, out1), SimpleType::Fun(in2, out2)) => {
-                self.unify(in1.as_ref(), in2.as_ref());
-                self.unify(out1.as_ref(), out2.as_ref());
-            }
-            _ => panic!("UAAAA {:?} {:?}", t1, t2),
         }
     }
 }

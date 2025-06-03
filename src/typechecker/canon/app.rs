@@ -1,5 +1,7 @@
 use std::{collections::HashMap, rc::Rc};
 
+use tracing::instrument;
+
 use crate::{
     ctt::term::{Branch, Dir, Formula, System},
     precise::term::{Mod, Term, Value},
@@ -15,6 +17,7 @@ use super::{
     nominal::{border, Facing, Nominal},
 };
 
+// #[instrument(skip_all)]
 pub fn app(ctx: &TypeContext, fun: &Rc<Value>, arg: &Rc<Value>) -> Result<Rc<Value>, TypeError> {
     // println!("app/// {:?} {:?}", fun, arg);
     match (fun.as_ref(), arg.as_ref()) {
@@ -175,6 +178,7 @@ pub fn app(ctx: &TypeContext, fun: &Rc<Value>, arg: &Rc<Value>) -> Result<Rc<Val
     }
 }
 
+// #[instrument(skip_all)]
 pub fn app_formula(
     ctx: &TypeContext,
     term: &Rc<Value>,
@@ -184,6 +188,7 @@ pub fn app_formula(
         Value::PLam(i, u, _) => u.act(ctx, i, formula),
         Value::Stuck(Term::Hole, _, _) => Ok(Value::app_formula(term, formula, Mod::Precise)),
         v if v.is_neutral() => {
+            // println!("infer {:?}", v);
             let tpe = infer_value(ctx, term)?;
             match (tpe.as_ref(), formula) {
                 (Value::PathP(_, a0, _, _), Formula::Dir(Dir::Zero)) => Ok(a0.clone()),
@@ -191,16 +196,16 @@ pub fn app_formula(
                 (_, phi) => Ok(Value::app_formula(term, phi, Mod::Precise)),
             }
         }
-        e => Err(ErrorCause::Hole)?,
+        _ => Err(ErrorCause::Hole)?,
     }
 }
 
-pub fn infer_value(ctx: &TypeContext, v: &Rc<Value>) -> Result<Rc<Value>, TypeError> {
+// #[instrument(skip_all)]
+fn infer_value(ctx: &TypeContext, v: &Rc<Value>) -> Result<Rc<Value>, TypeError> {
     match v.as_ref() {
         Value::Var(name, _) => Ok(ctx
-            .lookup_term(name)
-            .ok_or(ErrorCause::UnknownTermName(*name))?
-            .tpe),
+            .lookup_tpe(name)
+            .ok_or(ErrorCause::UnknownTermName(*name))?),
         Value::Stuck(Term::Undef(t, _), e, _) => eval(&ctx.in_closure(e), t),
         Value::Fst(t, _) => {
             let res = infer_value(ctx, t)?;

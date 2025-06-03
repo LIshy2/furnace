@@ -13,7 +13,6 @@ mod tests {
     use std::io::Read;
     use std::rc::Rc;
     use std::sync::{Arc, Mutex};
-    use std::time::SystemTime;
 
     struct ExampleModules;
     impl ModuleReader for ExampleModules {
@@ -27,37 +26,8 @@ mod tests {
         }
     }
 
-    struct FakeNotifier {
-        demangler: ResolveContext,
-        already: Arc<Mutex<HashSet<Identifier>>>,
-    }
-
-    impl FakeNotifier {
-        fn new(names: ResolveContext) -> FakeNotifier {
-            FakeNotifier {
-                demangler: names,
-                already: Arc::new(Mutex::new(HashSet::new())),
-            }
-        }
-    }
-
-    impl ProgressNotifier for FakeNotifier {
-        fn decl_check_started(&self, name: &Identifier) {
-            let mut a = self.already.lock().unwrap();
-            if a.contains(name) {
-                println!("ALREADY CHECKED");
-                panic!();
-            }
-            a.insert(*name);
-
-            println!("ccc {:?}", self.demangler.demangle(name));
-        }
-
-        fn decl_check_finished(&self, _: &Identifier) {}
-    }
-
     #[test]
-    fn check_examples() {
+    fn mark_examples() {
         unsafe { backtrace_on_stack_overflow::enable() };
 
         let reader = ExampleModules;
@@ -69,10 +39,6 @@ mod tests {
 
             println!("NEW FILE {:?}", path);
 
-            if path.file_name().unwrap() == "univprop.fctt" || path.file_name().unwrap() == "grothendieck.fctt" {
-                continue;
-            }
-
             if path.is_file() && path.extension().map(|s| s == "fctt").unwrap_or(false) {
                 let deps = resolver::module::build_module_dependencies(
                     &reader,
@@ -81,17 +47,7 @@ mod tests {
                 .unwrap();
 
                 let (modules, names) = resolve_modules(deps).unwrap();
-                let modules = mark_erased(&modules);
-
-                let mut ctx = TypeContext::new(Rc::new(FakeNotifier::new(names))).uncompacted();
-
-                for set in modules.iter() {
-                    let start_time = SystemTime::now();
-                    ctx = check_declaration_set(&ctx, set).unwrap();
-                    let end_time = SystemTime::now();
-                    let x = end_time.duration_since(start_time).unwrap();
-                    // println!("time: {}", x.as_secs_f64());
-                }
+                mark_erased(&modules);
             }
         }
     }

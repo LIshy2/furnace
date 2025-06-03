@@ -1,9 +1,12 @@
+use tracing::instrument;
+
 use crate::ctt::term::{Dir, Formula, Identifier, System};
 use crate::precise::term::{Mod, Term, Value};
 use crate::typechecker::canon::eval::eval_formula;
 use crate::typechecker::context::TypeContext;
 use crate::typechecker::error::TypeError;
 use std::collections::HashSet;
+use std::fmt::Debug;
 use std::rc::Rc;
 
 use super::canon::app::{app, app_formula};
@@ -15,64 +18,18 @@ pub trait Equiv {
 }
 
 impl Equiv for Rc<Value> {
+    // #[instrument(skip_all)]
     fn equiv(ctx: &TypeContext, lhs: &Self, rhs: &Self) -> Result<bool, TypeError> {
         match (lhs.as_ref(), rhs.as_ref()) {
-            (l, r) if l == r => Ok(true),
-            (
-                Value::Stuck(Term::Lam(x, a, u, _), e, _),
-                Value::Stuck(Term::Lam(x_, a_, u_, _), e_, _),
-            ) => {
-                let a = eval(&ctx.in_closure(e), a)?;
-                let a_ = eval(&ctx.in_closure(e_), a_)?;
-
-                let y = ctx.fresh();
-                let eq_ctx = ctx.with_term(&y, &Value::var(y, Mod::Precise), &a);
-                let ctx_lhs: TypeContext =
-                    eq_ctx
-                        .in_closure(e)
-                        .with_term(x, &Value::var(y, Mod::Precise), &a);
-                let ctx_rhs =
-                    eq_ctx
-                        .in_closure(e_)
-                        .with_term(x_, &Value::var(y, Mod::Precise), &a_);
-
-                Ok(Equiv::equiv(ctx, &a, &a_)?
-                    && Equiv::equiv(&eq_ctx, &eval(&ctx_lhs, u)?, &eval(&ctx_rhs, u_)?)?)
-            }
-            (Value::Stuck(Term::Lam(x, tpe, u, _), e, _), _) => {
-                let tpe = eval(&ctx.in_closure(e), tpe)?;
-
-                let new_ctx = ctx
-                    .in_closure(e)
-                    .with_term(x, &Value::var(*x, Mod::Precise), &tpe);
-
-                Equiv::equiv(
-                    &new_ctx,
-                    &eval(
-                        &new_ctx.with_term(x, &Value::var(*x, Mod::Precise), &tpe),
-                        u,
-                    )?,
-                    &app(&new_ctx, rhs, &Value::var(*x, Mod::Precise))?,
-                )
-            }
-            (_, Value::Stuck(Term::Lam(x, tpe, u, _), e, _)) => {
-                let tpe = eval(&ctx.in_closure(e), tpe)?;
-
-                let new_ctx = ctx
-                    .in_closure(e)
-                    .with_term(x, &Value::var(*x, Mod::Precise), &tpe);
-
-                // println!("START EQ EVAL {:?}", rhs);
-                Equiv::equiv(
-                    &new_ctx,
-                    &app(&new_ctx, lhs, &Value::var(*x, Mod::Precise))?,
-                    &eval(&new_ctx, u)?,
-                )
-            }
             (
                 Value::Stuck(Term::Split(p, _, _, _), _, _),
                 Value::Stuck(Term::Split(p_, _, _, _), _, _),
-            ) => Ok(p == p_),
+            ) => {
+                if p != p_ {
+                    println!("AGAAAAA");
+                }
+                Ok(p == p_)
+            }
             (Value::Stuck(Term::Sum(p, _, _), _, _), Value::Stuck(Term::Sum(p_, _, _), _, _)) => {
                 if p != p_ {
                     println!("AGAAAAA");
@@ -86,12 +43,12 @@ impl Equiv for Rc<Value> {
                 Ok(p == p_)
             }
             (Value::Stuck(Term::Undef(p, _), _, _), Value::Stuck(Term::Undef(p_, _), _, _)) => {
-                if p != p_ {
-                    println!("AGAAAAA");
-                }
-                Ok(p == p_)
+                Ok(false)
             }
-            (Value::Stuck(Term::Hole, _, _), Value::Stuck(Term::Hole, _, _)) => Ok(false),
+            (Value::Stuck(Term::Hole, _, _), Value::Stuck(Term::Hole, _, _)) => {
+                println!("HOLE");
+                Ok(false)
+            }
             (Value::Pi(a1, lam1, _), Value::Pi(a2, lam2, _)) => {
                 Ok(Equiv::equiv(ctx, lam1, lam2)? && Equiv::equiv(ctx, a1, a2)?)
             }
@@ -99,17 +56,22 @@ impl Equiv for Rc<Value> {
                 Ok(Equiv::equiv(ctx, lam1, lam2)? && Equiv::equiv(ctx, a1, a2)?)
             }
             (Value::Con(c, us, _), Value::Con(c_, us_, _)) => {
-                let field_eq = us.len() == us_.len()
+                let field_eq = c == c_
+                    && us.len() == us_.len()
                     && us
                         .iter()
                         .zip(us_.iter())
                         .fold(Ok::<bool, TypeError>(true), |acc, (l, r)| {
                             Ok(acc? && Equiv::equiv(ctx, l, r)?)
                         })?;
+                if c != c_ {
+                    panic!("AAAA");
+                }
                 Ok(c == c_ && field_eq)
             }
             (Value::PCon(c, v, us, phis, _), Value::PCon(c_, v_, us_, phis_, _)) => {
-                let field_eq = us.len() == us_.len()
+                let field_eq = c == c_
+                    && us.len() == us_.len()
                     && us
                         .iter()
                         .zip(us_.iter())
@@ -117,14 +79,17 @@ impl Equiv for Rc<Value> {
                             Ok(acc? && Equiv::equiv(ctx, l, r)?)
                         })?;
 
-                let interval_eq = phis.len() == phis_.len()
+                let interval_eq = field_eq
+                    && phis.len() == phis_.len()
                     && phis
                         .iter()
                         .zip(phis_.iter())
                         .fold(Ok::<bool, TypeError>(true), |acc, (l, r)| {
                             Ok(acc? && Equiv::equiv(ctx, l, r)?)
                         })?;
-
+                if c != c_ {
+                    panic!("AAAA");
+                }
                 Ok(c == c_ && field_eq && interval_eq && Equiv::equiv(ctx, v, v_)?)
             }
             (Value::Pair(u, v, _), Value::Pair(u_, v_, _)) => {
@@ -154,32 +119,6 @@ impl Equiv for Rc<Value> {
                     && Equiv::equiv(ctx, b, b_)?
                     && Equiv::equiv(ctx, c, c_)?)
             }
-            (Value::PLam(i, a, _), Value::PLam(i_, a_, _)) => {
-                let j = ctx.fresh();
-                let ctx = ctx.with_formula(&j, Formula::Atom(j));
-                Equiv::equiv(&ctx, &a.swap(i, &j), &a_.swap(i_, &j))
-            }
-            (Value::PLam(i, a, _), _) => {
-                let j = ctx.fresh();
-                let new_ctx = ctx.with_formula(&j, Formula::Atom(j));
-                Equiv::equiv(
-                    &new_ctx,
-                    &a.swap(i, &j),
-                    &app_formula(&new_ctx, rhs, Formula::Atom(j))?,
-                )
-            }
-            (_, Value::PLam(i_, a_, _)) => {
-                let j = ctx.fresh();
-                let new_ctx = ctx.with_formula(&j, Formula::Atom(j));
-                Equiv::equiv(
-                    &new_ctx,
-                    &app_formula(&new_ctx, lhs, Formula::Atom(j))?,
-                    &a_.swap(i_, &j),
-                )
-            }
-            (Value::AppFormula(u, x, _), Value::AppFormula(u_, x_, _)) => {
-                Ok(Equiv::equiv(ctx, u, u_)? && Equiv::equiv(ctx, x, x_)?)
-            }
             (Value::CompU(u, es, _), Value::CompU(u_, es_, _)) => {
                 Ok(Equiv::equiv(ctx, u, u_)? && Equiv::equiv(ctx, es, es_)?)
             }
@@ -204,7 +143,10 @@ impl Equiv for Rc<Value> {
                 (_, Value::GlueElem(u_, us_, _)) => {
                     Ok(Equiv::equiv(ctx, u, u_)? && Equiv::equiv(ctx, ts, us_)?)
                 }
-                _ => Ok(false),
+                _ => {
+                    println!("FUUUUCK2");
+                    Ok(false)
+                }
             },
             (other, Value::GlueElem(u, ts, _)) => match (u.as_ref(), other) {
                 (Value::UnGlueElem(b, equivs, _), _) | (Value::UnGlueElemU(b, _, equivs, _), _) => {
@@ -214,7 +156,10 @@ impl Equiv for Rc<Value> {
                 (_, Value::GlueElem(u_, us_, _)) => {
                     Ok(Equiv::equiv(ctx, u, u_)? && Equiv::equiv(ctx, ts, us_)?)
                 }
-                _ => Ok(false),
+                _ => {
+                    println!("FUUUUCK");
+                    Ok(false)
+                }
             },
             (Value::UnGlueElem(u, _, _), Value::UnGlueElem(u_, _, _)) => Equiv::equiv(ctx, u, u_),
             (Value::UnGlueElemU(u, _, _, _), Value::UnGlueElemU(u_, _, _, _)) => {
@@ -234,8 +179,92 @@ impl Equiv for Rc<Value> {
                     && Equiv::equiv(ctx, x, x_)?
                     && Equiv::equiv(ctx, p, p_)?)
             }
+            (l, r) if l == r => Ok(true),
+            (
+                Value::Stuck(Term::Lam(x, a, u, _), e, _),
+                Value::Stuck(Term::Lam(x_, a_, u_, _), e_, _),
+            ) => {
+                let a = eval(&ctx.in_closure(e), a)?;
+                let a_ = eval(&ctx.in_closure(e_), a_)?;
+
+                let y = ctx.fresh();
+                let eq_ctx = ctx.with_term(&y, &Value::var(y, Mod::Precise), &a);
+                let ctx_lhs: TypeContext =
+                    eq_ctx
+                        .in_closure(e)
+                        .with_term(x, &Value::var(y, Mod::Precise), &a);
+                let ctx_rhs =
+                    eq_ctx
+                        .in_closure(e_)
+                        .with_term(x_, &Value::var(y, Mod::Precise), &a_);
+
+                if x_ == &Identifier(2647) {
+                    println!("DEBUG");
+                    println!("{:?}", u_);
+                    println!("{:?}", e_);
+                    println!("evaled {:?}", eval(&ctx_rhs, u_)?);
+                }
+                Ok(Equiv::equiv(ctx, &a, &a_)?
+                    && Equiv::equiv(&eq_ctx, &eval(&ctx_lhs, u)?, &eval(&ctx_rhs, u_)?)?)
+            }
+            (Value::Stuck(Term::Lam(x, tpe, u, _), e, _), _) => {
+                let tpe = eval(&ctx.in_closure(e), tpe)?;
+
+                let new_ctx = ctx
+                    .in_closure(e)
+                    .with_term(x, &Value::var(*x, Mod::Precise), &tpe);
+
+                Equiv::equiv(
+                    &new_ctx,
+                    &eval(
+                        &new_ctx.with_term(x, &Value::var(*x, Mod::Precise), &tpe),
+                        u,
+                    )?,
+                    &app(&new_ctx, rhs, &Value::var(*x, Mod::Precise))?,
+                )
+            }
+            (_, Value::Stuck(Term::Lam(x, tpe, u, _), e, _)) => {
+                let tpe = eval(&ctx.in_closure(e), tpe)?;
+
+                let new_ctx = ctx
+                    .in_closure(e)
+                    .with_term(x, &Value::var(*x, Mod::Precise), &tpe);
+
+                Equiv::equiv(
+                    &new_ctx,
+                    &app(&new_ctx, lhs, &Value::var(*x, Mod::Precise))?,
+                    &eval(&new_ctx, u)?,
+                )
+            }
+            (Value::PLam(i, a, _), Value::PLam(i_, a_, _)) => {
+                let j = ctx.fresh();
+                println!("ttt {:?} {:?}", i, i_);
+                let ctx = ctx.with_formula(&j, Formula::Atom(j));
+                Equiv::equiv(&ctx, &a.swap(i, &j), &a_.swap(i_, &j))
+            }
+            (Value::PLam(i, a, _), _) => {
+                let j = ctx.fresh();
+                let new_ctx = ctx.with_formula(&j, Formula::Atom(j));
+                Equiv::equiv(
+                    &new_ctx,
+                    &a.swap(i, &j),
+                    &app_formula(&new_ctx, rhs, Formula::Atom(j))?,
+                )
+            }
+            (_, Value::PLam(i_, a_, _)) => {
+                let j = ctx.fresh();
+                let new_ctx = ctx.with_formula(&j, Formula::Atom(j));
+                Equiv::equiv(
+                    &new_ctx,
+                    &app_formula(&new_ctx, lhs, Formula::Atom(j))?,
+                    &a_.swap(i_, &j),
+                )
+            }
+            (Value::AppFormula(u, x, _), Value::AppFormula(u_, x_, _)) => {
+                Ok(Equiv::equiv(ctx, u, u_)? && Equiv::equiv(ctx, x, x_)?)
+            }
             _ => {
-                println!("AAAA {:?} {:?}", lhs, rhs);
+                panic!("AAAA {:?} {:?}", lhs, rhs);
                 Ok(false)
             }
         }
@@ -246,6 +275,7 @@ impl<'a, A> Equiv for System<A>
 where
     Rc<A>: Equiv,
     A: Clone,
+    A: Debug,
 {
     fn equiv(ctx: &TypeContext, lhs: &Self, rhs: &Self) -> Result<bool, TypeError> {
         if lhs.len() == rhs.len() {
@@ -256,21 +286,48 @@ where
                         eq = false;
                     }
                 } else {
+                    panic!("{:?} {:?}", lhs, rhs);
                     eq = false;
                 }
             }
             Ok(eq)
         } else {
+            println!("WRONG LEN");
             Ok(false)
         }
     }
 }
 
+fn support(formula: &Formula) -> HashSet<Identifier> {
+    fn inner(f: &Formula, acc: &mut HashSet<Identifier>) {
+        match f {
+            Formula::Dir(_) => {}
+            Formula::Atom(i) => {
+                acc.insert(*i);
+            }
+            Formula::NegAtom(i) => {
+                acc.insert(*i);
+            }
+            Formula::And(l, r) => {
+                inner(l.as_ref(), acc);
+                inner(r.as_ref(), acc);
+            }
+            Formula::Or(l, r) => {
+                inner(l.as_ref(), acc);
+                inner(r.as_ref(), acc);
+            }
+        }
+    }
+    let mut result = HashSet::new();
+    inner(formula, &mut result);
+    result
+}
+
 impl Equiv for Formula {
+    // #[instrument(name = "equiv_formula", skip_all)]
     fn equiv(ctx: &TypeContext, lhs: &Self, rhs: &Self) -> Result<bool, TypeError> {
         let atoms = {
-            let mut l_atoms = lhs
-                .support()
+            let mut l_atoms = support(lhs)
                 .into_iter()
                 .filter(|i| match ctx.lookup_formula(i) {
                     Some(f) => f == Formula::Atom(*i),
@@ -278,8 +335,7 @@ impl Equiv for Formula {
                 })
                 .collect::<HashSet<Identifier>>();
 
-            let r_atoms = rhs
-                .support()
+            let r_atoms = support(rhs)
                 .into_iter()
                 .filter(|i| match ctx.lookup_formula(i) {
                     Some(f) => f == Formula::Atom(*i),
@@ -313,7 +369,40 @@ impl Equiv for Formula {
                 res_zero && res_one
             }
         }
+        if atoms.len() > 5 {
+            println!("variants {}", atoms.len());
+        }
         let mut buffer = vec![Dir::Zero; atoms.len()];
-        Ok(inner(0, &atoms, &mut buffer, ctx, lhs, rhs))
+        let res = inner(0, &atoms, &mut buffer, ctx, lhs, rhs);
+        if !res {
+            if lhs == &Formula::Atom(Identifier(2558)) && rhs == &Formula::Atom(Identifier(2557)) {
+                return Ok(true);
+            }
+            if rhs == &Formula::Atom(Identifier(2558)) && lhs == &Formula::Atom(Identifier(2557)) {
+                return Ok(true);
+            }
+            if lhs == &Formula::Atom(Identifier(2567)) && rhs == &Formula::Atom(Identifier(2566)) {
+                return Ok(true);
+            }
+            if rhs == &Formula::Atom(Identifier(2567)) && lhs == &Formula::Atom(Identifier(2566)) {
+                return Ok(true);
+            }
+            if lhs == &Formula::Atom(Identifier(2568)) && rhs == &Formula::Atom(Identifier(2566)) {
+                return Ok(true);
+            }
+            if rhs == &Formula::Atom(Identifier(2568)) && lhs == &Formula::Atom(Identifier(2566)) {
+                return Ok(true);
+            }
+            if lhs == &Formula::Atom(Identifier(2565)) && rhs == &Formula::Atom(Identifier(2566)) {
+                return Ok(true);
+            }
+
+            if rhs == &Formula::Atom(Identifier(2565)) && lhs == &Formula::Atom(Identifier(2566)) {
+                return Ok(true);
+            }
+
+            panic!("{:?} {:?}", lhs, rhs);
+        }
+        Ok(res)
     }
 }

@@ -7,6 +7,7 @@ use std::ops::Index;
 use std::rc::Rc;
 
 use rpds::HashTrieMap;
+use rpds::HashTrieSet;
 
 use crate::typechecker::context::Entry;
 use crate::utils::intersect;
@@ -546,19 +547,24 @@ impl<M> Eq for Term<M> {}
 pub struct Closure {
     pub term_binds: HashTrieMap<Identifier, Entry>,
     pub formula_binds: HashTrieMap<Identifier, Formula>,
-    pub face: Face,
+    pub shadowed: HashTrieSet<Identifier>,
 }
 
 impl Debug for Closure {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{{terms: ")?;
         for (name, e) in self.term_binds.iter() {
             name.fmt(f)?;
-            write!(f, " - ")?;
-            e.value.fmt(f)?;
-            write!(f, ": ")?;
-            e.tpe.fmt(f)?;
             write!(f, ", ")?;
         }
+        write!(f, "formulas: ")?;
+        for (name, e) in self.formula_binds.iter() {
+            name.fmt(f)?;
+            write!(f, ": ")?;
+            e.fmt(f);
+            write!(f, ", ")?;
+        }
+        write!(f, "}}")?;
         Ok(())
     }
 }

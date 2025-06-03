@@ -1,5 +1,7 @@
 use std::{collections::HashMap, iter, rc::Rc};
 
+use tracing::instrument;
+
 use crate::{
     ctt::term::{anon_id, Dir, Face, Formula, Identifier, System},
     precise::term::{Mod, Term, Value},
@@ -138,6 +140,7 @@ fn trans_neg_line(ctx: &TypeContext, u: &Rc<Value>, v: &Rc<Value>) -> Result<Rc<
     trans_neg(ctx, &i, &app_formula(ctx, u, Formula::Atom(i))?, v)
 }
 
+// #[instrument(skip_all)]
 pub fn comp(
     ctx: &TypeContext,
     i: &Identifier,
@@ -159,7 +162,6 @@ pub fn comp(
                 .insert(Face::cond(&j, Dir::Zero), v0.clone())
                 .insert(Face::cond(&j, Dir::One), v1.clone());
 
-            // println!("COMP PATH u={:?}", &format!("{:?}", u)[0..20]);
             Ok(Value::plam(
                 j,
                 &comp(
@@ -271,8 +273,6 @@ pub fn comp(
                     let et = eval(&new_ctx, tpe)?;
                     let v = fill(&new_ctx, i, &et, &ns[ind], system.clone())?;
                     let vi1 = comp(&new_ctx, i, &et, &ns[ind], &system)?;
-
-                    // TODO
                     new_ctx = new_ctx.with_term(name, &v, &et);
                     vs.push(vi1);
                 }
@@ -332,6 +332,7 @@ fn is_system_neutral(s: &System<Value>) -> bool {
     s.values().any(|x| x.is_neutral())
 }
 
+// #[instrument(skip_all)]
 fn comp_u(
     ctx: &TypeContext,
     i: &Identifier,
@@ -491,6 +492,7 @@ fn comp_neg(
     comp(ctx, i, &sym(ctx, a, i)?, u, &sym(ctx, &ts, i)?)
 }
 
+// #[instrument(skip_all)]
 fn lem_eq(
     ctx: &TypeContext,
     eq: &Rc<Value>,
@@ -580,6 +582,7 @@ fn lem_eq(
     ))
 }
 
+// #[instrument(skip_all)]
 fn comp_glue(
     ctx: &TypeContext,
     i: &Identifier,
@@ -712,6 +715,7 @@ fn comp_glue(
     Ok(glue_elem(&vi1, usi1, Mod::Precise))
 }
 
+// #[instrument(skip_all)]
 fn comp_hit(
     ctx: &TypeContext,
     i: &Identifier,
@@ -736,6 +740,7 @@ fn comp_hit(
     )
 }
 
+// #[instrument(skip_all)]
 fn squeeze_hit(
     ctx: &TypeContext,
     i: &Identifier,
@@ -810,6 +815,7 @@ fn squeeze_hit(
     }
 }
 
+// #[instrument(skip_all)]
 fn transp_hit(
     ctx: &TypeContext,
     i: &Identifier,
@@ -866,6 +872,7 @@ fn transp_hit(
     }
 }
 
+// #[instrument(skip_all)]
 pub fn comp_univ(
     ctx: &TypeContext,
     b: &Rc<Value>,
@@ -1015,6 +1022,7 @@ fn comp_const_line(
     comp(ctx, &i, a, u, &ts_)
 }
 
+// #[instrument(skip_all)]
 pub fn eq_fun(
     ctx: &TypeContext,
     ve: &Rc<Value>,
@@ -1023,6 +1031,7 @@ pub fn eq_fun(
     trans_neg_line(ctx, ve, ve_alpha)
 }
 
+// #[instrument(skip_all)]
 pub fn idj(
     ctx: &TypeContext,
     a: &Rc<Value>,

@@ -1,48 +1,42 @@
-use crate::ctt::term::Term as CttTerm;
-use crate::ctt::term::{
-    Branch, Declaration, DeclarationSet, Formula, Identifier, Label, System, Telescope,
-};
+use crate::ctt::term::{Branch, Declaration, DeclarationSet, Formula, Label, System, Telescope};
+use crate::ctt::term::{Identifier, Term as CttTerm};
 
-use crate::precise::context::{Constraints, SimpleType};
+use crate::precise::context::PreciseContext;
 use crate::precise::term::{Mod, Term};
 use std::rc::Rc;
 
+use super::context::Tag;
+
 #[derive(Clone, Debug)]
 pub enum PreTerm {
-    Pi(Rc<PreTerm>, SimpleType),
-    App(Rc<PreTerm>, Rc<PreTerm>, SimpleType),
-    Lam(Identifier, Rc<PreTerm>, Rc<PreTerm>, SimpleType),
-    Where(Rc<PreTerm>, DeclarationSet<PreTerm>, SimpleType),
-    Var(Identifier, SimpleType),
+    Pi(Rc<PreTerm>, Tag),
+    App(Rc<PreTerm>, Rc<PreTerm>, Tag),
+    Lam(Identifier, Rc<PreTerm>, Rc<PreTerm>, Tag),
+    Where(Rc<PreTerm>, DeclarationSet<PreTerm>, Tag),
+    Var(Identifier, Tag),
     U,
-    Sigma(Rc<PreTerm>, SimpleType),
-    Pair(Rc<PreTerm>, Rc<PreTerm>, SimpleType),
-    Fst(Rc<PreTerm>, SimpleType),
-    Snd(Rc<PreTerm>, SimpleType),
-    Con(Identifier, Vec<Rc<PreTerm>>, SimpleType),
-    PCon(
-        Identifier,
-        Rc<PreTerm>,
-        Vec<Rc<PreTerm>>,
-        Vec<Formula>,
-        SimpleType,
-    ),
-    Split(Identifier, Rc<PreTerm>, Vec<Branch<PreTerm>>, SimpleType),
-    Sum(Identifier, Vec<Label<PreTerm>>, SimpleType),
-    HSum(Identifier, Vec<Label<PreTerm>>, SimpleType),
-    Undef(Rc<PreTerm>, SimpleType),
+    Sigma(Rc<PreTerm>, Tag),
+    Pair(Rc<PreTerm>, Rc<PreTerm>, Tag),
+    Fst(Rc<PreTerm>, Tag),
+    Snd(Rc<PreTerm>, Tag),
+    Con(Identifier, Vec<Rc<PreTerm>>, Tag),
+    PCon(Identifier, Rc<PreTerm>, Vec<Rc<PreTerm>>, Vec<Formula>, Tag),
+    Split(Identifier, Rc<PreTerm>, Vec<Branch<PreTerm>>, Tag),
+    Sum(Identifier, Vec<Label<PreTerm>>, Tag),
+    HSum(Identifier, Vec<Label<PreTerm>>, Tag),
+    Undef(Rc<PreTerm>, Tag),
     Hole,
-    PathP(Rc<PreTerm>, Rc<PreTerm>, Rc<PreTerm>, SimpleType),
-    PLam(Identifier, Rc<PreTerm>, SimpleType),
-    AppFormula(Rc<PreTerm>, Formula, SimpleType),
-    Comp(Rc<PreTerm>, Rc<PreTerm>, System<PreTerm>, SimpleType),
-    Fill(Rc<PreTerm>, Rc<PreTerm>, System<PreTerm>, SimpleType),
-    HComp(Rc<PreTerm>, Rc<PreTerm>, System<PreTerm>, SimpleType),
-    Glue(Rc<PreTerm>, System<PreTerm>, SimpleType),
-    GlueElem(Rc<PreTerm>, System<PreTerm>, SimpleType),
-    UnGlueElem(Rc<PreTerm>, System<PreTerm>, SimpleType),
-    Id(Rc<PreTerm>, Rc<PreTerm>, Rc<PreTerm>, SimpleType),
-    IdPair(Rc<PreTerm>, System<PreTerm>, SimpleType),
+    PathP(Rc<PreTerm>, Rc<PreTerm>, Rc<PreTerm>, Tag),
+    PLam(Identifier, Rc<PreTerm>, Tag),
+    AppFormula(Rc<PreTerm>, Formula, Tag),
+    Comp(Rc<PreTerm>, Rc<PreTerm>, System<PreTerm>, Tag),
+    Fill(Rc<PreTerm>, Rc<PreTerm>, System<PreTerm>, Tag),
+    HComp(Rc<PreTerm>, Rc<PreTerm>, System<PreTerm>, Tag),
+    Glue(Rc<PreTerm>, System<PreTerm>, Tag),
+    GlueElem(Rc<PreTerm>, System<PreTerm>, Tag),
+    UnGlueElem(Rc<PreTerm>, System<PreTerm>, Tag),
+    Id(Rc<PreTerm>, Rc<PreTerm>, Rc<PreTerm>, Tag),
+    IdPair(Rc<PreTerm>, System<PreTerm>, Tag),
     IdJ(
         Rc<PreTerm>,
         Rc<PreTerm>,
@@ -50,19 +44,19 @@ pub enum PreTerm {
         Rc<PreTerm>,
         Rc<PreTerm>,
         Rc<PreTerm>,
-        SimpleType,
+        Tag,
     ),
 }
 
 impl PreTerm {
-    fn tpe(&self) -> SimpleType {
+    fn tag(&self) -> Tag {
         match self {
             PreTerm::Pi(_, m) => m.clone(),
             PreTerm::App(_, _, m) => m.clone(),
             PreTerm::Lam(_, _, _, m) => m.clone(),
             PreTerm::Where(_, _, m) => m.clone(),
             PreTerm::Var(_, m) => m.clone(),
-            PreTerm::U => SimpleType::Strict,
+            PreTerm::U => Tag::Var(0),
             PreTerm::Sigma(_, m) => m.clone(),
             PreTerm::Pair(_, _, m) => m.clone(),
             PreTerm::Fst(_, m) => m.clone(),
@@ -73,7 +67,7 @@ impl PreTerm {
             PreTerm::Sum(_, _, m) => m.clone(),
             PreTerm::HSum(_, _, m) => m.clone(),
             PreTerm::Undef(_, m) => m.clone(),
-            PreTerm::Hole => SimpleType::Strict,
+            PreTerm::Hole => Tag::Var(0),
             PreTerm::PathP(_, _, _, m) => m.clone(),
             PreTerm::PLam(_, _, m) => m.clone(),
             PreTerm::AppFormula(_, _, m) => m.clone(),
@@ -90,60 +84,70 @@ impl PreTerm {
     }
 }
 
-fn analyze(ctx: &mut Constraints, t: &Rc<CttTerm<()>>) -> Rc<PreTerm> {
+fn analyze(ctx: &mut PreciseContext, t: &Rc<CttTerm<()>>) -> Rc<PreTerm> {
+    // println!("anal {:?}", t);
     match t.as_ref() {
         CttTerm::Pi(pi, _) => {
             let inner = analyze(ctx, pi);
-            Rc::new(PreTerm::Pi(inner.clone(), inner.tpe()))
+            Rc::new(PreTerm::Pi(inner.clone(), inner.tag()))
         }
         CttTerm::App(f, a, _) => {
             let f_t = analyze(ctx, f);
             let a_t = analyze(ctx, a);
-            let res_tpe = ctx.fresh();
-            ctx.unify(
-                &SimpleType::Fun(Box::new(a_t.tpe()), Box::new(res_tpe.clone())),
-                &f_t.tpe(),
-            );
-            Rc::new(PreTerm::App(f_t, a_t, res_tpe))
+            ctx.unify(&f_t.tag(), &a_t.tag());
+            let t = a_t.tag();
+            Rc::new(PreTerm::App(f_t, a_t, t))
         }
         CttTerm::Lam(a, t, b, _) => {
             let arg_t = analyze(ctx, t);
             let arg_type = ctx.fresh();
             ctx.add(a, arg_type.clone());
             let bod_t = analyze(ctx, b);
-            let bod_type = bod_t.tpe();
+            let bod_type = bod_t.tag();
+            ctx.unify(&arg_type, &bod_type);
             Rc::new(PreTerm::Lam(*a, arg_t, bod_t, bod_type))
         }
-        CttTerm::Where(e, ds, _) => Rc::new(PreTerm::Where(
-            analyze(ctx, e),
-            analyze_all(ctx, &vec![ds.clone()]).pop().unwrap(),
-            SimpleType::Strict,
-        )),
+        CttTerm::Where(e, ds, _) => {
+            let decls = analyze_all(ctx, &vec![ds.clone()]).pop().unwrap();
+            let tg = ctx.fresh();
+            let be = analyze(ctx, e);
+            ctx.unify(&tg, &be.tag());
+            match &decls {
+                DeclarationSet::Mutual(declarations) => {
+                    for decl in declarations {
+                        ctx.unify(&tg, &decl.body.tag());
+                    }
+                }
+                _ => {}
+            }
+            Rc::new(PreTerm::Where(be, decls, tg))
+        }
         CttTerm::Var(n, _) => Rc::new(PreTerm::Var(*n, ctx.get(n))),
         CttTerm::U => Rc::new(PreTerm::U),
         CttTerm::Sigma(si, _) => {
             let inner = analyze(ctx, si);
-            Rc::new(PreTerm::Sigma(inner.clone(), inner.tpe()))
+            Rc::new(PreTerm::Sigma(inner.clone(), inner.tag()))
         }
         CttTerm::Pair(fst, snd, _) => {
             let fst = analyze(ctx, fst);
             let snd = analyze(ctx, snd);
-            let fresh = ctx.fresh();
-            Rc::new(PreTerm::Pair(fst, snd, fresh))
+            ctx.unify(&fst.tag(), &snd.tag());
+            let t = fst.tag();
+            Rc::new(PreTerm::Pair(fst, snd, t))
         }
         CttTerm::Fst(p, _) => {
             let inner = analyze(ctx, p);
-            Rc::new(PreTerm::Fst(inner.clone(), inner.tpe()))
+            Rc::new(PreTerm::Fst(inner.clone(), inner.tag()))
         }
         CttTerm::Snd(p, _) => {
             let inner = analyze(ctx, p);
-            Rc::new(PreTerm::Snd(inner.clone(), inner.tpe()))
+            Rc::new(PreTerm::Snd(inner.clone(), inner.tag()))
         }
         CttTerm::Con(n, fs, _) => {
             let fs = fs.iter().map(|f| analyze(ctx, f)).collect::<Vec<_>>();
             let fresh = ctx.fresh();
             for f in &fs {
-                ctx.unify(&f.tpe(), &fresh);
+                ctx.unify(&f.tag(), &fresh);
             }
             Rc::new(PreTerm::Con(*n, fs, fresh))
         }
@@ -151,9 +155,8 @@ fn analyze(ctx: &mut Constraints, t: &Rc<CttTerm<()>>) -> Rc<PreTerm> {
             let fs = fs.iter().map(|f| analyze(ctx, f)).collect::<Vec<_>>();
             let fresh = ctx.fresh();
             for f in &fs {
-                ctx.unify(&f.tpe(), &fresh);
+                ctx.unify(&f.tag(), &fresh);
             }
-
             Rc::new(PreTerm::PCon(*n, analyze(ctx, t), fs, i.clone(), fresh))
         }
         CttTerm::Split(n, t, b, _) => {
@@ -162,7 +165,6 @@ fn analyze(ctx: &mut Constraints, t: &Rc<CttTerm<()>>) -> Rc<PreTerm> {
                 .iter()
                 .map(|b| match b {
                     Branch::OBranch(n, ars, t) => {
-                        // todo add >=
                         for a in ars {
                             let f = ctx.fresh();
                             ctx.add(a, f.clone());
@@ -171,7 +173,6 @@ fn analyze(ctx: &mut Constraints, t: &Rc<CttTerm<()>>) -> Rc<PreTerm> {
                         Branch::OBranch(*n, ars.clone(), analyze(ctx, t))
                     }
                     Branch::PBranch(n, ars, is, t) => {
-                        // todo add >=
                         for a in ars {
                             let f = ctx.fresh();
                             ctx.add(a, f.clone());
@@ -182,7 +183,6 @@ fn analyze(ctx: &mut Constraints, t: &Rc<CttTerm<()>>) -> Rc<PreTerm> {
                 })
                 .collect::<Vec<_>>();
 
-            // todo bred
             let o = ctx.fresh();
 
             for t in tpe_vars {
@@ -196,7 +196,7 @@ fn analyze(ctx: &mut Constraints, t: &Rc<CttTerm<()>>) -> Rc<PreTerm> {
                 .iter()
                 .map(|l| match l {
                     Label::OLabel(n, t) => Label::OLabel(*n, analyze_tele(ctx, t)),
-                    Label::PLabel(n, t, is, s) => panic!("h-label in sum"),
+                    Label::PLabel(_, _, _, _) => panic!("h-label in sum"),
                 })
                 .collect();
             let f = ctx.fresh();
@@ -208,11 +208,12 @@ fn analyze(ctx: &mut Constraints, t: &Rc<CttTerm<()>>) -> Rc<PreTerm> {
                 .map(|l| match l {
                     Label::OLabel(n, t) => Label::OLabel(*n, analyze_tele(ctx, t)),
                     Label::PLabel(n, t, is, s) => {
+                        let tele = analyze_tele(ctx, t);
                         let s = analyze_system(ctx, s);
                         for (_, t) in s.iter() {
-                            ctx.unify(&t.tpe(), &SimpleType::Strict);
+                            ctx.unify(&t.tag(), &Tag::Precise);
                         }
-                        Label::PLabel(*n, analyze_tele(ctx, t), is.clone(), s)
+                        Label::PLabel(*n, tele, is.clone(), s)
                     }
                 })
                 .collect();
@@ -230,21 +231,21 @@ fn analyze(ctx: &mut Constraints, t: &Rc<CttTerm<()>>) -> Rc<PreTerm> {
             let b = analyze(ctx, b);
             let e = analyze(ctx, e);
 
-            ctx.unify(&a.tpe(), &SimpleType::Strict);
-            ctx.unify(&b.tpe(), &SimpleType::Strict);
-            ctx.unify(&e.tpe(), &SimpleType::Strict);
+            ctx.unify(&a.tag(), &Tag::Precise);
+            ctx.unify(&b.tag(), &Tag::Precise);
+            ctx.unify(&e.tag(), &Tag::Precise);
             let f = ctx.fresh();
             Rc::new(PreTerm::PathP(a, b, e, f))
         }
         CttTerm::PLam(i, p, _) => {
             let inner = analyze(ctx, p);
-            let t = inner.tpe();
-            ctx.unify(&t, &SimpleType::Strict);
+            let t = inner.tag();
+            ctx.unify(&t, &Tag::Precise);
             Rc::new(PreTerm::PLam(*i, inner, t))
         }
         CttTerm::AppFormula(f, a, _) => {
             let inner = analyze(ctx, f);
-            let t = inner.tpe();
+            let t = inner.tag();
             Rc::new(PreTerm::AppFormula(inner, a.clone(), t))
         }
         CttTerm::Comp(a, b, s, _) => {
@@ -255,40 +256,43 @@ fn analyze(ctx: &mut Constraints, t: &Rc<CttTerm<()>>) -> Rc<PreTerm> {
         CttTerm::Glue(b, es, _) => Rc::new(PreTerm::Glue(
             analyze(ctx, b),
             analyze_system(ctx, es),
-            SimpleType::Strict,
+            Tag::Precise,
         )),
         CttTerm::GlueElem(b, es, _) => Rc::new(PreTerm::GlueElem(
             analyze(ctx, b),
             analyze_system(ctx, es),
-            SimpleType::Strict,
+            Tag::Precise,
         )),
         CttTerm::UnGlueElem(b, es, _) => Rc::new(PreTerm::UnGlueElem(
             analyze(ctx, b),
             analyze_system(ctx, es),
-            SimpleType::Strict,
+            Tag::Precise,
         )),
-        CttTerm::Fill(term, term1, system, _) => Rc::new(PreTerm::Fill(
-            analyze(ctx, term),
-            analyze(ctx, term1),
-            analyze_system(ctx, system),
-            SimpleType::Strict,
-        )),
+        CttTerm::Fill(term, term1, system, _) => {
+            let f = ctx.fresh();
+            Rc::new(PreTerm::Fill(
+                analyze(ctx, term),
+                analyze(ctx, term1),
+                analyze_system(ctx, system),
+                f,
+            ))
+        }
         CttTerm::HComp(term, term1, system, _) => Rc::new(PreTerm::HComp(
             analyze(ctx, term),
             analyze(ctx, term1),
             analyze_system(ctx, system),
-            SimpleType::Strict,
+            Tag::Precise,
         )),
         CttTerm::Id(term, term1, term2, _) => Rc::new(PreTerm::Id(
             analyze(ctx, term),
             analyze(ctx, term1),
             analyze(ctx, term2),
-            SimpleType::Strict,
+            Tag::Precise,
         )),
         CttTerm::IdPair(term, system, _) => Rc::new(PreTerm::IdPair(
             analyze(ctx, term),
             analyze_system(ctx, system),
-            SimpleType::Strict,
+            Tag::Precise,
         )),
         CttTerm::IdJ(term, term1, term2, term3, term4, term5, _) => Rc::new(PreTerm::IdJ(
             analyze(ctx, term),
@@ -297,50 +301,64 @@ fn analyze(ctx: &mut Constraints, t: &Rc<CttTerm<()>>) -> Rc<PreTerm> {
             analyze(ctx, term3),
             analyze(ctx, term4),
             analyze(ctx, term5),
-            SimpleType::Strict,
+            Tag::Precise,
         )),
     }
 }
 
-fn analyze_tele(ctx: &mut Constraints, t: &Telescope<CttTerm<()>>) -> Telescope<PreTerm> {
+fn analyze_tele(ctx: &mut PreciseContext, t: &Telescope<CttTerm<()>>) -> Telescope<PreTerm> {
     Telescope {
         variables: t
             .variables
             .iter()
-            .map(|(n, t)| (*n, analyze(ctx, t)))
+            .map(|(n, t)| {
+                let ft = ctx.fresh();
+                ctx.add(n, ft);
+                (*n, analyze(ctx, t))
+            })
             .collect(),
     }
 }
 
-fn analyze_system(ctx: &mut Constraints, t: &System<CttTerm<()>>) -> System<PreTerm> {
+fn analyze_system(ctx: &mut PreciseContext, t: &System<CttTerm<()>>) -> System<PreTerm> {
     t.iter()
         .map(|(f, t)| (f.clone(), analyze(ctx, t)))
         .collect()
 }
 
 pub fn analyze_all(
-    ctx: &mut Constraints,
+    ctx: &mut PreciseContext,
     decls: &Vec<DeclarationSet<CttTerm<()>>>,
 ) -> Vec<DeclarationSet<PreTerm>> {
     decls
         .iter()
         .map(|decl| match decl {
-            DeclarationSet::Mutual(decls) => DeclarationSet::Mutual(
-                decls
-                    .iter()
-                    .map(|d| {
-                        let f = ctx.fresh();
-                        ctx.add(&d.name, f.clone());
-                        let t = analyze(ctx, &d.body);
-                        ctx.unify(&t.tpe(), &f);
-                        Declaration {
-                            name: d.name,
-                            tpe: analyze(ctx, &d.tpe),
-                            body: t,
-                        }
-                    })
-                    .collect(),
-            ),
+            DeclarationSet::Mutual(decls) => {
+                // println!("mutual start");
+                decls.iter().for_each(|d| {
+                    // println!("add {:?}", d.name);
+                    let f = ctx.fresh();
+                    ctx.add(&d.name, f.clone());
+                });
+                let res = DeclarationSet::Mutual(
+                    decls
+                        .iter()
+                        .map(|d| {
+                            // println!("def {:?}", d.name);
+                            let f = ctx.get(&d.name);
+                            let t = analyze(ctx, &d.body);
+                            ctx.unify(&t.tag(), &f);
+                            Declaration {
+                                name: d.name,
+                                tpe: analyze(ctx, &d.tpe),
+                                body: t,
+                            }
+                        })
+                        .collect(),
+                );
+                // println!("mutual end");
+                res
+            }
             DeclarationSet::Opaque(s) => DeclarationSet::Opaque(*s),
             DeclarationSet::Transparent(s) => DeclarationSet::Transparent(*s),
             DeclarationSet::TransparentAll => DeclarationSet::TransparentAll,
@@ -348,22 +366,14 @@ pub fn analyze_all(
         .collect()
 }
 
-pub fn finalize_mod(ctx: &mut Constraints, t: &SimpleType) -> Mod {
-    let st = ctx.apply(t);
-    fn inner(ctx: &mut Constraints, s: &SimpleType) -> Mod {
-        match s {
-            SimpleType::Var(_) => Mod::Relaxed,
-            SimpleType::Strict => Mod::Precise,
-            SimpleType::Fun(a, b) => Mod::Arrow(
-                Box::new(finalize_mod(ctx, a)),
-                Box::new(finalize_mod(ctx, b)),
-            ),
-        }
+pub fn finalize_mod(ctx: &mut PreciseContext, t: &Tag) -> Mod {
+    match ctx.apply(t) {
+        Tag::Var(_) => Mod::Relaxed,
+        Tag::Precise => Mod::Precise,
     }
-    inner(ctx, &st)
 }
 
-pub fn finalize_term(ctx: &mut Constraints, t: &Rc<PreTerm>) -> Rc<Term> {
+pub fn finalize_term(ctx: &mut PreciseContext, t: &Rc<PreTerm>) -> Rc<Term> {
     match t.as_ref() {
         PreTerm::Pi(p, t) => Rc::new(Term::Pi(finalize_term(ctx, p), finalize_mod(ctx, t))),
         PreTerm::App(f, a, t) => Rc::new(Term::App(
@@ -525,13 +535,13 @@ pub fn finalize_term(ctx: &mut Constraints, t: &Rc<PreTerm>) -> Rc<Term> {
     }
 }
 
-pub fn finalize_system(ctx: &mut Constraints, sys: &System<PreTerm>) -> System<Term> {
+pub fn finalize_system(ctx: &mut PreciseContext, sys: &System<PreTerm>) -> System<Term> {
     sys.iter()
         .map(|(k, v)| (k.clone(), finalize_term(ctx, v)))
         .collect()
 }
 
-pub fn finalize_tele(ctx: &mut Constraints, tele: &Telescope<PreTerm>) -> Telescope<Term> {
+pub fn finalize_tele(ctx: &mut PreciseContext, tele: &Telescope<PreTerm>) -> Telescope<Term> {
     Telescope {
         variables: tele
             .variables
@@ -542,7 +552,7 @@ pub fn finalize_tele(ctx: &mut Constraints, tele: &Telescope<PreTerm>) -> Telesc
 }
 
 pub fn finalize_all(
-    ctx: &mut Constraints,
+    ctx: &mut PreciseContext,
     decls: &Vec<DeclarationSet<PreTerm>>,
 ) -> Vec<DeclarationSet<Term>> {
     decls
@@ -566,7 +576,7 @@ pub fn finalize_all(
 }
 
 pub fn mark_erased(decls: &Vec<DeclarationSet<CttTerm<()>>>) -> Vec<DeclarationSet<Term>> {
-    let mut ctx = Constraints::new();
+    let mut ctx = PreciseContext::new();
     let analyzed = analyze_all(&mut ctx, decls);
     finalize_all(&mut ctx, &analyzed)
 }

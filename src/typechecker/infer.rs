@@ -1,3 +1,5 @@
+use tracing::instrument;
+
 use crate::ctt::term::{anon_id, Face, Identifier, System, Telescope};
 use crate::precise::term::{Mod, Term, Value};
 use crate::typechecker::check::{
@@ -29,14 +31,14 @@ pub fn label_type(name: &Identifier, tpe: &Rc<Value>) -> Result<Telescope<Term>,
     Ok(label.telescope())
 }
 
+// #[instrument(skip_all)]
 pub fn infer(ctx: &TypeContext, term: &Rc<Term>) -> Result<Rc<Value>, TypeError> {
     // println!("infer {:?}", term);
     match term.as_ref() {
         Term::U => Ok(Rc::new(Value::U)),
         Term::Var(name, _) => Ok(ctx
-            .lookup_term(name)
-            .ok_or(ErrorCause::UnknownTermName(*name))?
-            .tpe),
+            .lookup_tpe(name)
+            .ok_or(ErrorCause::UnknownTermName(*name))?),
         Term::App(f, a, _) => {
             let fun_tpe = infer(ctx, f)?;
             let Value::Pi(tpe, lam, _) = fun_tpe.as_ref() else {

@@ -1,3 +1,5 @@
+use tracing::instrument;
+
 use crate::ctt::term::{Dir, Face, Formula, Identifier, Label, System};
 use crate::precise::term::{Mod, Term, Value};
 use crate::typechecker::context::TypeContext;
@@ -11,6 +13,7 @@ use super::comp::{comp_line, fill_line, hcomp, idj};
 use super::glue::{glue, glue_elem, unglue_elem};
 use super::nominal::Facing;
 
+// #[instrument(skip_all)]
 pub fn eval(ctx: &TypeContext, term: &Rc<Term>) -> Result<Rc<Value>, TypeError> {
     let res = match term.as_ref() {
         Term::U => Ok(Value::u()),
@@ -19,9 +22,8 @@ pub fn eval(ctx: &TypeContext, term: &Rc<Term>) -> Result<Rc<Value>, TypeError> 
             app(ctx, &f, &eval(ctx, arg)?)
         }
         Term::Var(name, _) => Ok(ctx
-            .lookup_term(name)
-            .ok_or(ErrorCause::UnknownTermName(*name))?
-            .value),
+            .lookup_value(name)
+            .ok_or(ErrorCause::UnknownTermName(*name))?),
         Term::Pi(lam, pi_m) => {
             let Term::Lam(_, tpe, _, _) = lam.as_ref() else {
                 Err(ErrorCause::Hole)?
@@ -144,6 +146,7 @@ pub fn eval(ctx: &TypeContext, term: &Rc<Term>) -> Result<Rc<Value>, TypeError> 
     }
 }
 
+// #[instrument(skip_all)]
 pub fn eval_formula(ctx: &TypeContext, formula: &Formula) -> Formula {
     match formula {
         d @ Formula::Dir(_) => d.clone(),
@@ -174,6 +177,7 @@ pub fn eval_formula(ctx: &TypeContext, formula: &Formula) -> Formula {
     }
 }
 
+// #[instrument(skip_all)]
 pub fn eval_system(ctx: &TypeContext, system: &System<Term>) -> Result<System<Value>, TypeError> {
     let mut hm = HashMap::new();
     for (alpha, t_alpha) in system.iter() {

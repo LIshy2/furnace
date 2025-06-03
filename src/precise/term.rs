@@ -4,7 +4,6 @@ use crate::ctt::term::{Term as CttTerm, Value as CttValue};
 pub enum Mod {
     Precise,
     Relaxed,
-    Arrow(Box<Mod>, Box<Mod>),
 }
 
 pub type Term = CttTerm<Mod>;

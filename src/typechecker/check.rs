@@ -1,3 +1,5 @@
+use tracing::{span, trace_span, Level};
+
 use crate::ctt::term::{
     anon_id, Branch, DeclarationSet, Dir, Formula, Identifier, Label, System, Telescope,
 };
@@ -60,7 +62,6 @@ fn check_branch(
                 sys_ctx = sys_ctx.with_formula(i, Formula::Atom(*j));
             }
             for ((name, tpe), bind) in tele.variables.iter().zip(ns) {
-                println!("tele pbranch {:?}", name);
                 sys_ctx = sys_ctx.with_term(
                     name,
                     &Value::var(*bind, Mod::Precise),
@@ -74,7 +75,6 @@ fn check_branch(
             let mut branch_ctx = ctx.uncompacted();
             let mut vars = vec![];
             for ((_, tpe), bind) in tele.variables.iter().zip(ns) {
-                println!("bind {:?}", bind);
                 let var = Value::var(*bind, Mod::Precise);
                 vars.push(var.clone());
                 branch_ctx = branch_ctx.with_term(bind, &var, &eval(data_ctx, tpe)?);
@@ -143,9 +143,11 @@ pub fn check_declaration_set(
                     ),
                     &tpe,
                 );
+                let check_span = trace_span!("check", def = ?decl.name);
+                let _enter = check_span.enter();
                 check(&pre_ctx, &decl.body, &tpe)?;
-                let b = eval(&pre_ctx, &decl.body)?;
-                new_ctx = new_ctx.with_term(&decl.name, &b, &tpe);
+                drop(_enter);
+                new_ctx = new_ctx.with_lazy_term(&decl.name, &decl.body, &tpe);
                 ctx.decl_check_finished(&decl.name);
             }
             Ok(new_ctx)
@@ -205,9 +207,14 @@ pub fn check_plam_system(
         .map(|(alpha, p_alpha)| {
             let face_ctx = ctx.with_face(alpha)?;
             let (a0, a1) = check_plam(&face_ctx, p_alpha, &va.face(ctx, alpha)?)?;
-            if Equiv::equiv(&face_ctx, &a0, &eval(&face_ctx, t0)?)? {
+            if Equiv::equiv(&face_ctx, &a0, &eval(&face_ctx, t0)?.face(&face_ctx, alpha)?)? {
                 Ok((alpha.clone(), a1))
             } else {
+                println!("FAIL");
+                println!("alpha={:?}", alpha);
+                let evaled = eval(&face_ctx, t0)?;
+                println!("evaled={:?}", &evaled.face(&face_ctx, alpha)?);
+                println!("a0={:?}", &a0);
                 Err(ErrorCause::Hole)?
             }
         })
@@ -362,7 +369,6 @@ fn check_glue_elem_u(
 }
 
 pub fn check(ctx: &TypeContext, term: &Rc<Term>, tpe: &Rc<Value>) -> Result<(), TypeError> {
-    // println!("check? {:?}: {:?}", term, tpe);
     match (tpe.as_ref(), term.as_ref()) {
         (_, Term::Undef(_, _)) => Ok(()),
         (_, Term::Hole) => Err(ErrorCause::Hole)?,
