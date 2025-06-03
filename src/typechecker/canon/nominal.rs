@@ -1,185 +1,140 @@
+use tracing::instrument;
+
 use crate::ctt::term::{Closure, Face, Formula, Identifier, System};
 use crate::precise::term::Value;
 use crate::typechecker::canon::app::{app, app_formula};
 use crate::typechecker::canon::comp::{comp_line, comp_univ, hcomp, idj};
 use crate::typechecker::canon::eval::{get_first, get_second, inv_formula, pcon};
 use crate::typechecker::canon::glue::{glue, glue_elem, unglue_elem, unglue_u};
-use crate::typechecker::context::{Entry, TypeContext};
+use crate::typechecker::context::{Entry, EntryValueState, TypeContext};
 use crate::typechecker::error::TypeError;
+use std::cell::RefCell;
 use std::collections::HashMap;
+use std::ops::Deref;
 use std::rc::Rc;
 
 pub trait Nominal: Sized {
-    fn support(&self) -> Vec<Identifier>;
+    fn sups(&self, i: &Identifier) -> bool;
 
     fn act(&self, ctx: &TypeContext, i: &Identifier, f: Formula) -> Result<Self, TypeError>;
 
     fn swap(&self, from: &Identifier, to: &Identifier) -> Self;
 }
 
-impl Nominal for Closure {
-    fn support(&self) -> Vec<Identifier> {
-        let mut res = vec![];
-        self.term_binds.iter().for_each(|(_, e)| {
-            res.extend(e.value.support());
-        });
-        res
-    }
+fn act_closure(
+    ctx: &TypeContext,
+    c: &Closure,
+    i: &Identifier,
+    f: Formula,
+) -> Result<Option<Closure>, TypeError> {
+    // println!("act {:?}", c);
+    let mut updated = false;
 
-    fn act(&self, ctx: &TypeContext, i: &Identifier, f: Formula) -> Result<Self, TypeError> {
-        let term_binds = self
-            .term_binds
-            .iter()
-            .map(|(k, v)| {
-                Ok((
-                    *k,
-                    Entry {
-                        tpe: v.tpe.act(ctx, i, f.clone())?,
-                        value: v.value.act(ctx, i, f.clone())?,
-                    },
-                ))
-            })
-            .collect::<Result<_, TypeError>>()?;
-        let formula_binds = self
-            .formula_binds
-            .iter()
-            .map(|(k, v)| Ok((*k, v.act(ctx, i, f.clone())?)))
-            .collect::<Result<_, TypeError>>()?;
-
-        Ok(Closure {
-            term_binds,
-            formula_binds,
-            face: self.face.clone(),
-        })
-    }
-
-    fn swap(&self, from: &Identifier, to: &Identifier) -> Self {
-        let term_binds = self
-            .term_binds
-            .iter()
-            .map(|(k, v)| {
-                (
-                    *k,
-                    Entry {
-                        tpe: v.tpe.swap(from, to),
-                        value: v.value.swap(from, to),
-                    },
-                )
-            })
-            .collect();
-        let formula_binds = self
-            .formula_binds
-            .iter()
-            .map(|(k, v)| (*k, v.swap(from, to)))
-            .collect();
-
-        Closure {
-            term_binds,
-            formula_binds,
-            face: self.face.clone(),
+    let mut term_binds = c.term_binds.clone();
+    for (k, v) in &c.term_binds {
+        let mut entry_update = false;
+        let acted_tpe = v.tpe().act(ctx, i, f.clone())?;
+        if !Rc::ptr_eq(&acted_tpe, &v.tpe()) {
+            entry_update = true;
         }
+        let acted_value = match v.value() {
+            EntryValueState::Cached(value) => {
+                let acted = value.act(ctx, i, f.clone())?;
+                if !Rc::ptr_eq(&acted, &value) {
+                    entry_update = true;
+                }
+                EntryValueState::Cached(acted)
+            }
+            EntryValueState::Lazy(term, closure) => {
+                let new_closure = act_closure(ctx, &closure, i, f.clone())?;
+                if new_closure.is_some() {
+                    entry_update = true;
+                }
+                EntryValueState::Lazy(term, new_closure.unwrap_or(closure))
+            }
+        };
+        if entry_update {
+            updated = true;
+            term_binds = term_binds.insert(*k, Entry::new_state(acted_value, &acted_tpe));
+        }
+    }
+    let mut formula_binds = c.formula_binds.clone();
+    for (k, v) in &c.formula_binds {
+        let acted_v = v.act(ctx, i, f.clone())?;
+        if &acted_v != v {
+            updated = true;
+            formula_binds = formula_binds.insert(*k, acted_v);
+        }
+    }
+
+    if updated {
+        Ok(Some(Closure {
+            shadowed: c.shadowed.clone(),
+            term_binds,
+            formula_binds,
+        }))
+    } else {
+        Ok(None)
     }
 }
 
 impl Nominal for Rc<Value> {
-    fn support(&self) -> Vec<Identifier> {
-        let mut result = Vec::new();
+    fn sups(&self, i: &Identifier) -> bool {
         match self.as_ref() {
-            Value::Stuck(_, c, _) => result.extend(c.support()),
-            Value::Pi(a, t, _) => {
-                result.extend(a.support());
-                result.extend(t.support());
-            }
-            Value::App(t1, t2, _) => {
-                result.extend(t1.support());
-                result.extend(t2.support());
-            }
-            Value::Var(_, _) => (),
-            Value::U => (),
-            Value::Sigma(a, t, _) => {
-                result.extend(a.support());
-                result.extend(t.support());
-            }
-            Value::Pair(t1, t2, _) => {
-                result.extend(t1.support());
-                result.extend(t2.support());
-            }
-            Value::Fst(t, _) => result.extend(t.support()),
-            Value::Snd(t, _) => result.extend(t.support()),
-            Value::Con(_, ts, _) => {
-                for t in ts {
-                    result.extend(t.support());
+            Value::Stuck(_, c, _) => {
+                fn closure_sups(c: &Closure, i: &Identifier) -> bool {
+                    for (_, e) in &c.term_binds {
+                        match e.value() {
+                            EntryValueState::Lazy(_, sub_closure) => {
+                                if closure_sups(&sub_closure, i) {
+                                    return true;
+                                }
+                            }
+                            EntryValueState::Cached(v) => {
+                                if v.sups(i) {
+                                    return true;
+                                }
+                            }
+                        }
+                    }
+                    for (_, f) in &c.formula_binds {
+                        if f.sups(i) {
+                            return true;
+                        }
+                    }
+                    return false;
                 }
+                closure_sups(c, i)
             }
+            Value::Pi(a, t, _) => a.sups(i) || t.sups(i),
+            Value::App(t1, t2, _) => t1.sups(i) || t2.sups(i),
+            Value::Var(_, _) => false,
+            Value::U => false,
+            Value::Sigma(a, t, _) => a.sups(i) || t.sups(i),
+            Value::Pair(t1, t2, _) => t1.sups(i) || t2.sups(i),
+            Value::Fst(t, _) => t.sups(i),
+            Value::Snd(t, _) => t.sups(i),
+            Value::Con(_, ts, _) => ts.iter().any(|v| v.sups(i)),
             Value::PCon(_, t, ts, is, _) => {
-                result.extend(t.support());
-                for t in ts {
-                    result.extend(t.support());
-                }
-                for i in is {
-                    result.extend(i.support());
-                }
+                t.sups(i) || ts.iter().any(|v| v.sups(i)) || is.iter().any(|f| f.sups(i))
             }
-            Value::PathP(t1, t2, t3, _) => {
-                result.extend(t1.support());
-                result.extend(t2.support());
-                result.extend(t3.support());
-            }
-            Value::PLam(n, t, _) => result.extend(t.support().iter().filter(|x| x != &n)),
-            Value::AppFormula(t, f, _) => {
-                result.extend(t.support());
-                result.extend(f.support())
-            }
-            Value::Comp(t1, t2, system, _) => {
-                result.extend(t1.support());
-                result.extend(t2.support());
-                result.extend(system.support());
-            }
-            Value::CompU(t, system, _) => {
-                result.extend(t.support());
-                result.extend(system.support());
-            }
-            Value::HComp(t1, t2, system, _) => {
-                result.extend(t1.support());
-                result.extend(t2.support());
-                result.extend(system.support());
-            }
-            Value::Glue(t, system, _) => {
-                result.extend(t.support());
-                result.extend(system.support());
-            }
-            Value::GlueElem(t, system, _) => {
-                result.extend(t.support());
-                result.extend(system.support());
-            }
-            Value::UnGlueElem(t, system, _) => {
-                result.extend(t.support());
-                result.extend(system.support());
-            }
-            Value::UnGlueElemU(t, b, system, _) => {
-                result.extend(t.support());
-                result.extend(b.support());
-                result.extend(system.support());
-            }
-            Value::Id(t1, t2, t3, _) => {
-                result.extend(t1.support());
-                result.extend(t2.support());
-                result.extend(t3.support());
-            }
-            Value::IdPair(t, system, _) => {
-                result.extend(t.support());
-                result.extend(system.support());
-            }
+            Value::PathP(t1, t2, t3, _) => t1.sups(i) || t2.sups(i) || t3.sups(i),
+            Value::PLam(n, t, _) => n != i && t.sups(i),
+            Value::AppFormula(t, f, _) => t.sups(i) || f.sups(i),
+            Value::Comp(t1, t2, system, _) => t1.sups(i) || t2.sups(i) || system.sups(i),
+            Value::CompU(t, system, _) => t.sups(i) || system.sups(i),
+            Value::HComp(t1, t2, system, _) => t1.sups(i) || t2.sups(i) || system.sups(i),
+            Value::Glue(t, system, _) => t.sups(i) || system.sups(i),
+            Value::GlueElem(t, system, _) => t.sups(i) || system.sups(i),
+            Value::UnGlueElem(t, system, _) => t.sups(i) || system.sups(i),
+            Value::UnGlueElemU(t, b, system, _) => t.sups(i) || b.sups(i) || system.sups(i),
+            Value::Id(t1, t2, t3, _) => t1.sups(i) || t2.sups(i) || t3.sups(i),
+            Value::IdPair(t, system, _) => t.sups(i) || system.sups(i),
+
             Value::IdJ(t1, t2, t3, t4, t5, t6, _) => {
-                result.extend(t1.support());
-                result.extend(t2.support());
-                result.extend(t3.support());
-                result.extend(t4.support());
-                result.extend(t5.support());
-                result.extend(t6.support());
+                t1.sups(i) || t2.sups(i) || t3.sups(i) || t4.sups(i) || t5.sups(i) || t6.sups(i)
             }
         }
-        result
     }
 
     fn act(&self, ctx: &TypeContext, i: &Identifier, f: Formula) -> Result<Self, TypeError> {
@@ -189,7 +144,7 @@ impl Nominal for Rc<Value> {
             i: &Identifier,
             f: Formula,
         ) -> Result<Option<Formula>, TypeError> {
-            if o.support().contains(i) {
+            if o.sups(i) {
                 Ok(Some(o.act(ctx, i, f)?))
             } else {
                 Ok(None)
@@ -202,7 +157,7 @@ impl Nominal for Rc<Value> {
             i: &Identifier,
             f: Formula,
         ) -> Result<Option<System<Value>>, TypeError> {
-            if o.support().contains(i) {
+            if o.sups(i) {
                 Ok(Some(o.act(ctx, i, f)?))
             } else {
                 Ok(None)
@@ -210,11 +165,13 @@ impl Nominal for Rc<Value> {
         }
 
         match self.as_ref() {
-            Value::Stuck(t, c, m) => Ok(Rc::new(Value::Stuck(
-                t.clone(),
-                c.act(ctx, i, f)?,
-                m.clone(),
-            ))),
+            Value::Stuck(t, c, m) => {
+                if let Some(new_c) = act_closure(ctx, c, i, f)? {
+                    Ok(Rc::new(Value::Stuck(t.clone(), new_c, m.clone())))
+                } else {
+                    Ok(self.clone())
+                }
+            }
             Value::Pi(t, u, m) => {
                 let new_t = t.act(ctx, i, f.clone())?;
                 let new_u = u.act(ctx, i, f)?;
@@ -303,7 +260,7 @@ impl Nominal for Rc<Value> {
                 let new_phis = phis
                     .iter()
                     .map(|x| {
-                        if x.support().contains(i) {
+                        if x.sups(i) {
                             let new_x = x.act(ctx, i, f.clone())?;
                             changed = true;
                             Ok(new_x)
@@ -334,8 +291,7 @@ impl Nominal for Rc<Value> {
                 if j == i {
                     Ok(self.clone())
                 } else {
-                    let sphi = self.support();
-                    if !sphi.contains(j) {
+                    if !f.sups(j) {
                         let new_v = v.act(ctx, i, f)?;
                         if Rc::ptr_eq(v, &new_v) {
                             Ok(self.clone())
@@ -485,41 +441,146 @@ impl Nominal for Rc<Value> {
             Value::U | Value::Var(_, _) => Ok(self.clone()),
         }
     }
+
     fn swap(&self, from: &Identifier, to: &Identifier) -> Self {
+        fn swap_formula(o: &Formula, from: &Identifier, to: &Identifier) -> Option<Formula> {
+            if o.sups(from) || o.sups(to) {
+                Some(o.swap(from, to))
+            } else {
+                None
+            }
+        }
+
+        fn swap_system(
+            o: &System<Value>,
+            from: &Identifier,
+            to: &Identifier,
+        ) -> Option<System<Value>> {
+            if o.sups(from) || o.sups(to) {
+                Some(o.swap(from, to))
+            } else {
+                None
+            }
+        }
+
         match self.as_ref() {
-            Value::U => Rc::new(Value::U),
-            Value::Pi(t, u, m) => Rc::new(Value::Pi(t.swap(from, to), u.swap(from, to), m.clone())),
+            Value::U => self.clone(),
+            Value::Var(_, _) => self.clone(),
+            Value::Pi(t, u, m) => {
+                let new_t = t.swap(from, to);
+                let new_u = u.swap(from, to);
+                if Rc::ptr_eq(&new_t, t) && Rc::ptr_eq(&new_u, u) {
+                    self.clone()
+                } else {
+                    Rc::new(Value::Pi(new_t, new_u, m.clone()))
+                }
+            }
             Value::App(a, b, m) => {
-                Rc::new(Value::App(a.swap(from, to), b.swap(from, to), m.clone()))
+                let new_a = a.swap(from, to);
+                let new_b = b.swap(from, to);
+                if Rc::ptr_eq(&new_a, a) && Rc::ptr_eq(&new_b, b) {
+                    self.clone()
+                } else {
+                    Rc::new(Value::App(new_a, new_b, m.clone()))
+                }
             }
             Value::Sigma(a, t, m) => {
-                Rc::new(Value::Sigma(a.swap(from, to), t.swap(from, to), m.clone()))
+                let new_a = a.swap(from, to);
+                let new_t = t.swap(from, to);
+                if Rc::ptr_eq(&new_a, a) && Rc::ptr_eq(&new_t, t) {
+                    self.clone()
+                } else {
+                    Rc::new(Value::Sigma(new_a, new_t, m.clone()))
+                }
             }
-            Value::Pair(fst, snd, m) => Rc::new(Value::Pair(
-                fst.swap(from, to),
-                snd.swap(from, to),
-                m.clone(),
-            )),
-            Value::Fst(v, m) => Rc::new(Value::Fst(v.swap(from, to), m.clone())),
-            Value::Snd(v, m) => Rc::new(Value::Snd(v.swap(from, to), m.clone())),
-            Value::Con(c, a, m) => Rc::new(Value::Con(
-                *c,
-                a.iter().map(|x| x.swap(from, to)).collect(),
-                m.clone(),
-            )),
-            Value::PCon(c, t, vs, phis, m) => Rc::new(Value::PCon(
-                *c,
-                t.swap(from, to),
-                vs.iter().map(|x| x.swap(from, to)).collect(),
-                phis.iter().map(|x| x.swap(from, to)).collect(),
-                m.clone(),
-            )),
-            Value::PathP(a, u, v, m) => Rc::new(Value::PathP(
-                a.swap(from, to),
-                u.swap(from, to),
-                v.swap(from, to),
-                m.clone(),
-            )),
+            Value::Pair(fst, snd, m) => {
+                let new_fst = fst.swap(from, to);
+                let new_snd = snd.swap(from, to);
+                if Rc::ptr_eq(&new_fst, fst) && Rc::ptr_eq(&new_snd, snd) {
+                    self.clone()
+                } else {
+                    Rc::new(Value::Pair(new_fst, new_snd, m.clone()))
+                }
+            }
+            Value::Fst(v, m) => {
+                let new_v = v.swap(from, to);
+                if Rc::ptr_eq(&new_v, v) {
+                    self.clone()
+                } else {
+                    Rc::new(Value::Fst(new_v, m.clone()))
+                }
+            }
+            Value::Snd(v, m) => {
+                let new_v = v.swap(from, to);
+                if Rc::ptr_eq(&new_v, v) {
+                    self.clone()
+                } else {
+                    Rc::new(Value::Snd(new_v, m.clone()))
+                }
+            }
+            Value::Con(c, a, m) => {
+                let mut changed = false;
+                let new_a: Vec<_> = a
+                    .iter()
+                    .map(|x| {
+                        let new_x = x.swap(from, to);
+                        if !Rc::ptr_eq(&new_x, x) {
+                            changed = true;
+                        }
+                        new_x
+                    })
+                    .collect();
+
+                if !changed {
+                    self.clone()
+                } else {
+                    Rc::new(Value::Con(*c, new_a, m.clone()))
+                }
+            }
+            Value::PCon(c, t, vs, phis, m) => {
+                let new_t = t.swap(from, to);
+                let mut vs_changed = false;
+                let new_vs: Vec<_> = vs
+                    .iter()
+                    .map(|x| {
+                        let new_x = x.swap(from, to);
+                        if !Rc::ptr_eq(&new_x, x) {
+                            vs_changed = true;
+                        }
+                        new_x
+                    })
+                    .collect();
+
+                let mut phis_changed = false;
+                let new_phis: Vec<_> = phis
+                    .iter()
+                    .map(|x| {
+                        if x.sups(from) || x.sups(to) {
+                            let new_x = x.swap(from, to);
+                            phis_changed = true;
+                            new_x
+                        } else {
+                            x.clone()
+                        }
+                    })
+                    .collect();
+
+                if Rc::ptr_eq(&new_t, t) && !vs_changed && !phis_changed {
+                    self.clone()
+                } else {
+                    Rc::new(Value::PCon(*c, new_t, new_vs, new_phis, m.clone()))
+                }
+            }
+            Value::PathP(a, u, v, m) => {
+                let new_a = a.swap(from, to);
+                let new_u = u.swap(from, to);
+                let new_v = v.swap(from, to);
+                if Rc::ptr_eq(&new_a, a) && Rc::ptr_eq(&new_u, u) && Rc::ptr_eq(&new_v, v) {
+                    self.clone()
+                } else {
+                    Rc::new(Value::PathP(new_a, new_u, new_v, m.clone()))
+                }
+            }
             Value::PLam(j, v, m) => {
                 let k = if j == from {
                     to
@@ -528,69 +589,217 @@ impl Nominal for Rc<Value> {
                 } else {
                     j
                 };
-                Rc::new(Value::PLam(*k, v.swap(j, k).swap(from, to), m.clone()))
+
+                if j == k {
+                    let new_v = v.swap(from, to);
+                    if Rc::ptr_eq(&new_v, v) {
+                        self.clone()
+                    } else {
+                        Rc::new(Value::PLam(*j, new_v, m.clone()))
+                    }
+                } else {
+                    let new_v = v.swap(j, k).swap(from, to);
+                    Rc::new(Value::PLam(*k, new_v, m.clone()))
+                }
             }
-            Value::AppFormula(b, c, m) => Rc::new(Value::AppFormula(
-                b.swap(from, to),
-                c.swap(from, to),
-                m.clone(),
-            )),
-            Value::Comp(a, v, ts, m) => Rc::new(Value::Comp(
-                a.swap(from, to),
-                v.swap(from, to),
-                ts.swap(from, to),
-                m.clone(),
-            )),
+            Value::AppFormula(b, c, m) => {
+                let new_b = b.swap(from, to);
+                let new_c = swap_formula(c, from, to);
+                if Rc::ptr_eq(&new_b, b) && new_c.is_none() {
+                    self.clone()
+                } else {
+                    Rc::new(Value::AppFormula(
+                        new_b,
+                        new_c.unwrap_or(c.clone()),
+                        m.clone(),
+                    ))
+                }
+            }
+            Value::Comp(a, v, ts, m) => {
+                let new_a = a.swap(from, to);
+                let new_v = v.swap(from, to);
+                let new_ts = swap_system(ts, from, to);
+                if Rc::ptr_eq(&new_a, a) && Rc::ptr_eq(&new_v, v) && new_ts.is_none() {
+                    self.clone()
+                } else {
+                    Rc::new(Value::Comp(
+                        new_a,
+                        new_v,
+                        new_ts.unwrap_or(ts.clone()),
+                        m.clone(),
+                    ))
+                }
+            }
             Value::CompU(v, ts, m) => {
-                Rc::new(Value::CompU(v.swap(from, to), ts.swap(from, to), m.clone()))
+                let new_v = v.swap(from, to);
+                let new_ts = swap_system(ts, from, to);
+                if Rc::ptr_eq(&new_v, v) && new_ts.is_none() {
+                    self.clone()
+                } else {
+                    Rc::new(Value::CompU(new_v, new_ts.unwrap_or(ts.clone()), m.clone()))
+                }
             }
-            Value::HComp(a, u, us, m) => Rc::new(Value::HComp(
-                a.swap(from, to),
-                u.swap(from, to),
-                us.swap(from, to),
-                m.clone(),
-            )),
+            Value::HComp(a, u, us, m) => {
+                let new_a = a.swap(from, to);
+                let new_u = u.swap(from, to);
+                let new_us = swap_system(us, from, to);
+                if Rc::ptr_eq(&new_a, a) && Rc::ptr_eq(&new_u, u) && new_us.is_none() {
+                    self.clone()
+                } else {
+                    Rc::new(Value::HComp(
+                        new_a,
+                        new_u,
+                        new_us.unwrap_or(us.clone()),
+                        m.clone(),
+                    ))
+                }
+            }
             Value::Glue(a, ts, m) => {
-                Rc::new(Value::Glue(a.swap(from, to), ts.swap(from, to), m.clone()))
+                let new_a = a.swap(from, to);
+                let new_ts = swap_system(ts, from, to);
+                if Rc::ptr_eq(&new_a, a) && new_ts.is_none() {
+                    self.clone()
+                } else {
+                    Rc::new(Value::Glue(new_a, new_ts.unwrap_or(ts.clone()), m.clone()))
+                }
             }
-            Value::GlueElem(a, ts, m) => Rc::new(Value::GlueElem(
-                a.swap(from, to),
-                ts.swap(from, to),
-                m.clone(),
-            )),
-            Value::UnGlueElem(a, ts, m) => Rc::new(Value::UnGlueElem(
-                a.swap(from, to),
-                ts.swap(from, to),
-                m.clone(),
-            )),
-            Value::UnGlueElemU(a, b, ts, m) => Rc::new(Value::UnGlueElemU(
-                a.swap(from, to),
-                b.swap(from, to),
-                ts.swap(from, to),
-                m.clone(),
-            )),
-            Value::Id(a, u, v, m) => Rc::new(Value::Id(
-                a.swap(from, to),
-                u.swap(from, to),
-                v.swap(from, to),
-                m.clone(),
-            )),
-            Value::IdPair(u, us, m) => Rc::new(Value::IdPair(
-                u.swap(from, to),
-                us.swap(from, to),
-                m.clone(),
-            )),
-            Value::IdJ(a, u, c, d, x, p, m) => Rc::new(Value::IdJ(
-                a.swap(from, to),
-                u.swap(from, to),
-                c.swap(from, to),
-                d.swap(from, to),
-                x.swap(from, to),
-                p.swap(from, to),
-                m.clone(),
-            )),
-            Value::Stuck(t, c, m) => Rc::new(Value::Stuck(t.clone(), c.swap(from, to), m.clone())),
-            Value::Var(_, _) => self.clone(),
+            Value::GlueElem(a, ts, m) => {
+                let new_a = a.swap(from, to);
+                let new_ts = swap_system(ts, from, to);
+                if Rc::ptr_eq(&new_a, a) && new_ts.is_none() {
+                    self.clone()
+                } else {
+                    Rc::new(Value::GlueElem(
+                        new_a,
+                        new_ts.unwrap_or(ts.clone()),
+                        m.clone(),
+                    ))
+                }
+            }
+            Value::UnGlueElem(a, ts, m) => {
+                let new_a = a.swap(from, to);
+                let new_ts = swap_system(ts, from, to);
+                if Rc::ptr_eq(&new_a, a) && new_ts.is_none() {
+                    self.clone()
+                } else {
+                    Rc::new(Value::UnGlueElem(
+                        new_a,
+                        new_ts.unwrap_or(ts.clone()),
+                        m.clone(),
+                    ))
+                }
+            }
+            Value::UnGlueElemU(a, b, ts, m) => {
+                let new_a = a.swap(from, to);
+                let new_b = b.swap(from, to);
+                let new_ts = swap_system(ts, from, to);
+                if Rc::ptr_eq(&new_a, a) && Rc::ptr_eq(&new_b, b) && new_ts.is_none() {
+                    self.clone()
+                } else {
+                    Rc::new(Value::UnGlueElemU(
+                        new_a,
+                        new_b,
+                        new_ts.unwrap_or(ts.clone()),
+                        m.clone(),
+                    ))
+                }
+            }
+            Value::Id(a, u, v, m) => {
+                let new_a = a.swap(from, to);
+                let new_u = u.swap(from, to);
+                let new_v = v.swap(from, to);
+                if Rc::ptr_eq(&new_a, a) && Rc::ptr_eq(&new_u, u) && Rc::ptr_eq(&new_v, v) {
+                    self.clone()
+                } else {
+                    Rc::new(Value::Id(new_a, new_u, new_v, m.clone()))
+                }
+            }
+            Value::IdPair(u, us, m) => {
+                let new_u = u.swap(from, to);
+                let new_us = swap_system(us, from, to);
+                if Rc::ptr_eq(&new_u, u) && new_us.is_none() {
+                    self.clone()
+                } else {
+                    Rc::new(Value::IdPair(
+                        new_u,
+                        new_us.unwrap_or(us.clone()),
+                        m.clone(),
+                    ))
+                }
+            }
+            Value::IdJ(a, u, c, d, x, p, m) => {
+                let new_a = a.swap(from, to);
+                let new_u = u.swap(from, to);
+                let new_c = c.swap(from, to);
+                let new_d = d.swap(from, to);
+                let new_x = x.swap(from, to);
+                let new_p = p.swap(from, to);
+                if Rc::ptr_eq(&new_a, a)
+                    && Rc::ptr_eq(&new_u, u)
+                    && Rc::ptr_eq(&new_c, c)
+                    && Rc::ptr_eq(&new_d, d)
+                    && Rc::ptr_eq(&new_x, x)
+                    && Rc::ptr_eq(&new_p, p)
+                {
+                    self.clone()
+                } else {
+                    Rc::new(Value::IdJ(
+                        new_a,
+                        new_u,
+                        new_c,
+                        new_d,
+                        new_x,
+                        new_p,
+                        m.clone(),
+                    ))
+                }
+            }
+            Value::Stuck(t, c, m) => {
+                let mut updated = false;
+
+                let mut term_binds = c.term_binds.clone();
+                for (k, v) in &c.term_binds {
+                    let mut entry_update = false;
+                    let swaped_tpe = v.tpe().swap(from, to);
+                    if !Rc::ptr_eq(&swaped_tpe, &v.tpe()) {
+                        entry_update = true;
+                    }
+                    let swapped_value = match v.value() {
+                        EntryValueState::Cached(value) => {
+                            let swapped = value.swap(from, to);
+                            if !Rc::ptr_eq(&swapped, &value) {
+                                entry_update = true;
+                            }
+                            EntryValueState::Cached(swapped)
+                        }
+                        lazy => lazy.clone(),
+                    };
+                    if entry_update {
+                        updated = true;
+                        term_binds =
+                            term_binds.insert(*k, Entry::new_state(swapped_value, &swaped_tpe));
+                    }
+                }
+                let mut formula_binds = c.formula_binds.clone();
+                for (k, v) in &c.formula_binds {
+                    let acted_v = v.swap(from, to);
+                    if &acted_v != v {
+                        updated = true;
+                        formula_binds = formula_binds.insert(*k, acted_v);
+                    }
+                }
+
+                if updated {
+                    let new_c = Closure {
+                        shadowed: c.shadowed.clone(),
+                        term_binds,
+                        formula_binds,
+                    };
+                    Rc::new(Value::Stuck(t.clone(), new_c, m.clone()))
+                } else {
+                    self.clone()
+                }
+            }
         }
     }
 }
@@ -600,13 +809,13 @@ where
     Rc<A>: Nominal,
     A: Clone,
 {
-    fn support(&self) -> Vec<Identifier> {
-        let mut result = vec![];
+    fn sups(&self, i: &Identifier) -> bool {
         for (k, v) in self.iter() {
-            result.extend(k.binds.keys());
-            result.extend(v.support());
+            if k.binds.contains_key(i) || v.sups(i) {
+                return true;
+            }
         }
-        result
+        return false;
     }
 
     fn act(&self, ctx: &TypeContext, i: &Identifier, phi: Formula) -> Result<Self, TypeError> {
@@ -657,25 +866,14 @@ where
 }
 
 impl Nominal for Formula {
-    fn support(&self) -> Vec<Identifier> {
-        fn inner(f: &Formula, acc: &mut Vec<Identifier>) {
-            match f {
-                Formula::Dir(_) => {}
-                Formula::Atom(i) => acc.push(*i),
-                Formula::NegAtom(i) => acc.push(*i),
-                Formula::And(l, r) => {
-                    inner(l.as_ref(), acc);
-                    inner(r.as_ref(), acc);
-                }
-                Formula::Or(l, r) => {
-                    inner(l.as_ref(), acc);
-                    inner(r.as_ref(), acc);
-                }
-            }
+    fn sups(&self, i: &Identifier) -> bool {
+        match self {
+            Formula::Dir(_) => false,
+            Formula::Atom(identifier) => identifier == i,
+            Formula::NegAtom(identifier) => identifier == i,
+            Formula::And(lhs, rhs) => lhs.sups(i) || rhs.sups(i),
+            Formula::Or(lhs, rhs) => lhs.sups(i) || rhs.sups(i),
         }
-        let mut result = vec![];
-        inner(self, &mut result);
-        result
     }
 
     fn act(&self, ctx: &TypeContext, i: &Identifier, phi: Formula) -> Result<Self, TypeError> {
@@ -746,6 +944,7 @@ pub trait Facing: Sized {
 }
 
 impl<A: Nominal + Clone> Facing for A {
+    // #[instrument(skip_all)]
     fn face(&self, ctx: &TypeContext, face: &Face) -> Result<A, TypeError> {
         face.binds.iter().fold(Ok(self.clone()), |a, (i, d)| {
             a?.act(ctx, i, Formula::Dir(d.clone()))
