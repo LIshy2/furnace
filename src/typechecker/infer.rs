@@ -33,7 +33,6 @@ pub fn label_type(name: &Identifier, tpe: &Rc<Value>) -> Result<Telescope<Term>,
 
 // #[instrument(skip_all)]
 pub fn infer(ctx: &TypeContext, term: &Rc<Term>) -> Result<Rc<Value>, TypeError> {
-    // println!("infer {:?}", term);
     match term.as_ref() {
         Term::U => Ok(Rc::new(Value::U)),
         Term::Var(name, _) => Ok(ctx
@@ -42,9 +41,6 @@ pub fn infer(ctx: &TypeContext, term: &Rc<Term>) -> Result<Rc<Value>, TypeError>
         Term::App(f, a, _) => {
             let fun_tpe = infer(ctx, f)?;
             let Value::Pi(tpe, lam, _) = fun_tpe.as_ref() else {
-                Err(ErrorCause::Hole)?
-            };
-            let Value::Stuck(Term::Lam(x, _, _, _), e, _) = lam.as_ref() else {
                 Err(ErrorCause::Hole)?
             };
             check(ctx, a, tpe)?;
@@ -125,7 +121,7 @@ pub fn infer(ctx: &TypeContext, term: &Rc<Term>) -> Result<Rc<Value>, TypeError>
             for (arg, (name, tpe)) in es.iter().zip(tele.variables) {
                 let arg_v = eval(&arg_ctx, arg)?;
                 let tpe = eval(&arg_ctx, &tpe)?;
-                arg_ctx = arg_ctx.with_term(&name, &arg_v, &tpe);
+                arg_ctx = arg_ctx.with_term(&name, &arg_v);
                 check(&arg_ctx, arg, &tpe)?;
             }
 

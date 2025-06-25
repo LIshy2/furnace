@@ -13,7 +13,6 @@ use super::comp::{comp_line, fill_line, hcomp, idj};
 use super::glue::{glue, glue_elem, unglue_elem};
 use super::nominal::Facing;
 
-// #[instrument(skip_all)]
 pub fn eval(ctx: &TypeContext, term: &Rc<Term>) -> Result<Rc<Value>, TypeError> {
     let res = match term.as_ref() {
         Term::U => Ok(Value::u()),
@@ -102,7 +101,15 @@ pub fn eval(ctx: &TypeContext, term: &Rc<Term>) -> Result<Rc<Value>, TypeError> 
             let plam_ctx = ctx.with_formula(i, Formula::Atom(*i));
             Ok(Value::plam(*i, &eval(&plam_ctx, t)?, m.clone()))
         }
-        Term::AppFormula(e, phi, _) => app_formula(ctx, &eval(ctx, e)?, eval_formula(ctx, phi)),
+        Term::AppFormula(e, phi, _) => {
+            let ee = eval(ctx, e)?;
+            match app_formula(ctx, &ee, eval_formula(ctx, phi)) {
+                Ok(r) => Ok(r),
+                Err(e) => {
+                    Err(e)
+                }
+            }
+        }
         Term::Comp(a, t0, ts, _) => {
             comp_line(ctx, &eval(ctx, a)?, &eval(ctx, t0)?, eval_system(ctx, ts)?)
         }
@@ -139,11 +146,12 @@ pub fn eval(ctx: &TypeContext, term: &Rc<Term>) -> Result<Rc<Value>, TypeError> 
         ),
         _ => panic!("UNEVALUABLE VALUE IN EVAL {:?}", term),
     };
-    if term.mode() == Mod::Relaxed {
-        Ok(ctx.compact(&res?))
-    } else {
-        res
-    }
+    // if term.mode() == Mod::Relaxed {
+    //     // println!("Compacted");
+    //     Ok(ctx.compact(&res?))
+    // } else {
+    res
+    // }
 }
 
 // #[instrument(skip_all)]
@@ -181,9 +189,9 @@ pub fn eval_formula(ctx: &TypeContext, formula: &Formula) -> Formula {
 pub fn eval_system(ctx: &TypeContext, system: &System<Term>) -> Result<System<Value>, TypeError> {
     let mut hm = HashMap::new();
     for (alpha, t_alpha) in system.iter() {
-        let mut betas: Vec<Face> = vec![Face::eps()];
+        let mut betas = HashSet::from([Face::eps()]);
         for (i, d) in alpha.binds.iter() {
-            let i_value = ctx.lookup_formula(i).unwrap_or(Formula::Atom(*i));
+            let i_value = ctx.lookup_formula(i).unwrap();
             let faces = inv_formula(i_value, d.clone());
             let mut new_betas = vec![];
             for face in faces {
@@ -193,7 +201,7 @@ pub fn eval_system(ctx: &TypeContext, system: &System<Term>) -> Result<System<Va
                     }
                 }
             }
-            betas = new_betas;
+            betas = new_betas.into_iter().collect::<HashSet<_>>()
         }
         for beta in betas {
             let new_ctx = ctx.with_face(&beta)?;
@@ -311,10 +319,9 @@ pub fn pcon(
             };
             let new_ctx = tele.variables.iter().zip(us.iter()).fold(
                 Ok::<TypeContext, TypeError>(ctx.in_closure(e).clone()),
-                |ctx, ((name, tpe), val)| {
+                |ctx, ((name, _), val)| {
                     let ctx = ctx?;
-                    let tpe = eval(&ctx, tpe)?;
-                    Ok(ctx.with_term(name, val, &tpe))
+                    Ok(ctx.with_term(name, val))
                 },
             )?;
             let new_ctx = is

@@ -3,7 +3,7 @@ use std::{collections::HashMap, rc::Rc};
 use tracing::instrument;
 
 use crate::{
-    ctt::term::{Branch, Dir, Formula, System},
+    ctt::term::{Branch, Dir, Formula, Identifier, System},
     precise::term::{Mod, Term, Value},
     typechecker::{
         context::TypeContext,
@@ -17,13 +17,11 @@ use super::{
     nominal::{border, Facing, Nominal},
 };
 
-// #[instrument(skip_all)]
 pub fn app(ctx: &TypeContext, fun: &Rc<Value>, arg: &Rc<Value>) -> Result<Rc<Value>, TypeError> {
-    // println!("app/// {:?} {:?}", fun, arg);
     match (fun.as_ref(), arg.as_ref()) {
-        (Value::Stuck(Term::Lam(x, tpe, body, _), e, _), _) => {
+        (Value::Stuck(Term::Lam(x, _, body, _), e, _), _) => {
             let lambda_ctx = ctx.in_closure(e);
-            let body_ctx = lambda_ctx.with_term(x, arg, &eval(&lambda_ctx, tpe)?);
+            let body_ctx = lambda_ctx.with_term(x, arg);
             eval(&body_ctx, body)
         }
         (Value::Stuck(Term::Split(_, ty, branches, _), se, _), Value::Con(c, vs, _)) => {
@@ -54,10 +52,9 @@ pub fn app(ctx: &TypeContext, fun: &Rc<Value>, arg: &Rc<Value>) -> Result<Rc<Val
 
                     let label = labels.iter().find(|l| &l.name() == c).unwrap();
                     let tele = label.telescope();
-                    for ((name, v), (t_name, tpe)) in xs.iter().zip(vs).zip(tele.variables) {
-                        let tpe = eval(&tpe_ctx, &tpe)?;
-                        tpe_ctx = tpe_ctx.with_term(&t_name, v, &tpe);
-                        body_ctx = body_ctx.with_term(name, v, &tpe);
+                    for ((name, v), (t_name, _)) in xs.iter().zip(vs).zip(tele.variables) {
+                        tpe_ctx = tpe_ctx.with_term(&t_name, v);
+                        body_ctx = body_ctx.with_term(name, v);
                     }
                     eval(&body_ctx, t)
                 }
@@ -93,10 +90,9 @@ pub fn app(ctx: &TypeContext, fun: &Rc<Value>, arg: &Rc<Value>) -> Result<Rc<Val
                     let label = labels.iter().find(|l| &l.name() == c).unwrap();
                     let tele = label.telescope();
 
-                    for ((name, v), (t_name, tpe)) in xs.iter().zip(us).zip(tele.variables) {
-                        let tpe = eval(&tpe_ctx, &tpe)?;
-                        tpe_ctx = tpe_ctx.with_term(&t_name, v, &tpe);
-                        body_ctx = body_ctx.with_term(name, v, &tpe);
+                    for ((name, v), (t_name, _)) in xs.iter().zip(us).zip(tele.variables) {
+                        tpe_ctx = tpe_ctx.with_term(&t_name, v);
+                        body_ctx = body_ctx.with_term(name, v);
                     }
                     for (name, v) in is.iter().zip(phis) {
                         body_ctx = body_ctx.with_formula(name, v.clone());
@@ -143,11 +139,7 @@ pub fn app(ctx: &TypeContext, fun: &Rc<Value>, arg: &Rc<Value>) -> Result<Rc<Val
             let Value::Pi(va, f, _) = pi.as_ref() else {
                 Err(ErrorCause::Hole)?
             };
-            let Value::Stuck(Term::Lam(_, _, _, _), e, _) = f.as_ref() else {
-                Err(ErrorCause::Hole)?
-            };
             let j = ctx.fresh();
-            let ctx = ctx.with_formula(&j, Formula::Atom(j));
             let (aj, fj) = (va.swap(i, &j), f.swap(i, &j));
             let tsj = ts
                 .iter()
@@ -159,20 +151,20 @@ pub fn app(ctx: &TypeContext, fun: &Rc<Value>, arg: &Rc<Value>) -> Result<Rc<Val
             let b = border(&ctx, &v, &tsj)?;
             for (k, v) in tsj.iter() {
                 if let Some(v2) = b.get(k) {
-                    m.insert(k.clone(), app(&ctx, v, v2)?);
+                    let a = app(&ctx, v, v2)?;
+                    m.insert(k.clone(), a);
                 }
             }
-            comp(
-                &ctx,
-                &j,
-                &app(&ctx, &fj, &v)?,
-                &app(&ctx, li0, &vi0)?,
-                &System::from(m),
-            )
+            let sm = System::from(m);
+            let res = comp(&ctx, &j, &app(&ctx, &fj, &v)?, &app(&ctx, li0, &vi0)?, &sm)?;
+            if res.sups(&j) {
+                panic!("jjjj");
+            }
+            Ok(res)
         }
         _ if fun.is_neutral() => Ok(Value::app(fun, arg, Mod::Precise)),
         _ => {
-            println!("fail {:?}", arg);
+            println!("fail {:?} {:?}", fun, arg);
             Err(ErrorCause::Hole)?
         }
     }
@@ -188,8 +180,10 @@ pub fn app_formula(
         Value::PLam(i, u, _) => u.act(ctx, i, formula),
         Value::Stuck(Term::Hole, _, _) => Ok(Value::app_formula(term, formula, Mod::Precise)),
         v if v.is_neutral() => {
-            // println!("infer {:?}", v);
-            let tpe = infer_value(ctx, term)?;
+            // println!("infer_value {:?}", v);
+            let tpe = infer_value(ctx, term).inspect_err(|err| {
+                println!("erroooor {:?}", term);
+            })?;
             match (tpe.as_ref(), formula) {
                 (Value::PathP(_, a0, _, _), Formula::Dir(Dir::Zero)) => Ok(a0.clone()),
                 (Value::PathP(_, _, a1, _), Formula::Dir(Dir::One)) => Ok(a1.clone()),
@@ -223,7 +217,10 @@ fn infer_value(ctx: &TypeContext, v: &Rc<Value>) -> Result<Rc<Value>, TypeError>
             let res = infer_value(ctx, t)?;
             match res.as_ref() {
                 Value::Sigma(_, lam, _) => Ok(app(ctx, lam, &Value::fst(t, Mod::Precise))?),
-                _ => Err(ErrorCause::ExpectedSigma(res))?,
+                _ => {
+                    println!("biba {:?}", t);
+                    Err(ErrorCause::ExpectedSigma(res))?
+                }
             }
         }
         Value::App(t0, t1, _) => {

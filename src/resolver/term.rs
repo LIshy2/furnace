@@ -59,8 +59,7 @@ fn open_formula_app(t: ast::Term) -> (Box<ast::Term>, Vec<ast::Term>, Vec<ast::F
             }
         }
     }
-    let (a, b, mut c) = inner(t);
-    c.reverse();
+    let (a, b, c) = inner(t);
     (a, b, c)
 }
 

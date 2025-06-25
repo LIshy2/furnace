@@ -3,7 +3,7 @@ use tracing::instrument;
 use crate::ctt::term::{Face, System};
 use crate::precise::term::{Mod, Value};
 use crate::typechecker::context::TypeContext;
-use crate::typechecker::error::TypeError;
+use crate::typechecker::error::{ErrorCause, TypeError};
 use std::rc::Rc;
 
 use super::app::app;
@@ -57,7 +57,7 @@ pub fn unglue(
     } else {
         match v.as_ref() {
             Value::GlueElem(v, _, _) => Ok(v.clone()),
-            _ => panic!("AAAA"),
+            _ => Err(ErrorCause::ExpectedGlue(v.clone()))?,
         }
     }
 }

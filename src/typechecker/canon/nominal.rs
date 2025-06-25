@@ -8,6 +8,7 @@ use crate::typechecker::canon::eval::{get_first, get_second, inv_formula, pcon};
 use crate::typechecker::canon::glue::{glue, glue_elem, unglue_elem, unglue_u};
 use crate::typechecker::context::{Entry, EntryValueState, TypeContext};
 use crate::typechecker::error::TypeError;
+use std::backtrace::Backtrace;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::ops::Deref;
@@ -21,7 +22,7 @@ pub trait Nominal: Sized {
     fn swap(&self, from: &Identifier, to: &Identifier) -> Self;
 }
 
-fn act_closure(
+pub fn act_closure(
     ctx: &TypeContext,
     c: &Closure,
     i: &Identifier,
@@ -33,10 +34,6 @@ fn act_closure(
     let mut term_binds = c.term_binds.clone();
     for (k, v) in &c.term_binds {
         let mut entry_update = false;
-        let acted_tpe = v.tpe().act(ctx, i, f.clone())?;
-        if !Rc::ptr_eq(&acted_tpe, &v.tpe()) {
-            entry_update = true;
-        }
         let acted_value = match v.value() {
             EntryValueState::Cached(value) => {
                 let acted = value.act(ctx, i, f.clone())?;
@@ -55,7 +52,31 @@ fn act_closure(
         };
         if entry_update {
             updated = true;
-            term_binds = term_binds.insert(*k, Entry::new_state(acted_value, &acted_tpe));
+            term_binds = term_binds.insert(*k, Entry::new_state(acted_value));
+        }
+    }
+    let mut type_binds = c.type_binds.clone();
+    for (k, v) in &c.type_binds {
+        let mut entry_update = false;
+        let acted_value = match v.value() {
+            EntryValueState::Cached(value) => {
+                let acted = value.act(ctx, i, f.clone())?;
+                if !Rc::ptr_eq(&acted, &value) {
+                    entry_update = true;
+                }
+                EntryValueState::Cached(acted)
+            }
+            EntryValueState::Lazy(term, closure) => {
+                let new_closure = act_closure(ctx, &closure, i, f.clone())?;
+                if new_closure.is_some() {
+                    entry_update = true;
+                }
+                EntryValueState::Lazy(term, new_closure.unwrap_or(closure))
+            }
+        };
+        if entry_update {
+            updated = true;
+            type_binds = type_binds.insert(*k, Entry::new_state(acted_value));
         }
     }
     let mut formula_binds = c.formula_binds.clone();
@@ -71,10 +92,83 @@ fn act_closure(
         Ok(Some(Closure {
             shadowed: c.shadowed.clone(),
             term_binds,
+            type_binds,
             formula_binds,
         }))
     } else {
         Ok(None)
+    }
+}
+
+fn swap_closure(c: &Closure, from: &Identifier, to: &Identifier) -> Option<Closure> {
+    let mut updated = false;
+
+    let mut term_binds = c.term_binds.clone();
+    for (k, v) in &c.term_binds {
+        let mut entry_update = false;
+        let swapped_value = match v.value() {
+            EntryValueState::Cached(value) => {
+                let swapped = value.swap(from, to);
+                if !Rc::ptr_eq(&swapped, &value) {
+                    entry_update = true;
+                }
+                EntryValueState::Cached(swapped)
+            }
+            EntryValueState::Lazy(term, closure) => {
+                let new_closure = swap_closure(&closure, from, to);
+                if new_closure.is_some() {
+                    entry_update = true;
+                }
+                EntryValueState::Lazy(term, new_closure.unwrap_or(closure))
+            }
+        };
+        if entry_update {
+            updated = true;
+            term_binds = term_binds.insert(*k, Entry::new_state(swapped_value));
+        }
+    }
+    let mut type_binds = c.type_binds.clone();
+    for (k, v) in &c.type_binds {
+        let mut entry_update = false;
+        let swapped_value = match v.value() {
+            EntryValueState::Cached(value) => {
+                let swapped = value.swap(from, to);
+                if !Rc::ptr_eq(&swapped, &value) {
+                    entry_update = true;
+                }
+                EntryValueState::Cached(swapped)
+            }
+            EntryValueState::Lazy(term, closure) => {
+                let new_closure = swap_closure(&closure, from, to);
+                if new_closure.is_some() {
+                    entry_update = true;
+                }
+                EntryValueState::Lazy(term, new_closure.unwrap_or(closure))
+            }
+        };
+        if entry_update {
+            updated = true;
+            type_binds = type_binds.insert(*k, Entry::new_state(swapped_value));
+        }
+    }
+    let mut formula_binds = c.formula_binds.clone();
+    for (k, v) in &c.formula_binds {
+        let acted_v = v.swap(from, to);
+        if &acted_v != v {
+            updated = true;
+            formula_binds = formula_binds.insert(*k, acted_v);
+        }
+    }
+
+    if updated {
+        Some(Closure {
+            shadowed: c.shadowed.clone(),
+            term_binds,
+            type_binds,
+            formula_binds,
+        })
+    } else {
+        None
     }
 }
 
@@ -138,6 +232,7 @@ impl Nominal for Rc<Value> {
     }
 
     fn act(&self, ctx: &TypeContext, i: &Identifier, f: Formula) -> Result<Self, TypeError> {
+        let cf = f.clone();
         fn act_formula(
             ctx: &TypeContext,
             o: &Formula,
@@ -164,7 +259,7 @@ impl Nominal for Rc<Value> {
             }
         }
 
-        match self.as_ref() {
+        let res = match self.as_ref() {
             Value::Stuck(t, c, m) => {
                 if let Some(new_c) = act_closure(ctx, c, i, f)? {
                     Ok(Rc::new(Value::Stuck(t.clone(), new_c, m.clone())))
@@ -439,10 +534,36 @@ impl Nominal for Rc<Value> {
                 }
             }
             Value::U | Value::Var(_, _) => Ok(self.clone()),
+        }?;
+        if i == &Identifier(337)
+            && cf == Formula::Atom(Identifier(133147))
+            && res.sups(&Identifier(133159))
+            && !self.sups(&Identifier(133159))
+        {
+            println!("i {:?}", i);
+            println!("f {:?}", cf);
+            println!("term sup {:?}", self.sups(&Identifier(133159)));
+            println!("term {:?}", &format!("{:?}", self)[0..500]);
+            let st = format!("{:?}", res);
+            println!("len {}", st.len());
+            println!("res {:?}", &format!("{:?}", res)[0..10000]);
+            panic!();
         }
+        Ok(res)
     }
 
     fn swap(&self, from: &Identifier, to: &Identifier) -> Self {
+        // if from == &Identifier(100158)
+        //     || to == &Identifier(100158)
+        //     || from == &Identifier(100169)
+        //     || to == &Identifier(100169)
+        // {
+        //     println!("from {:?}", from);
+        //     println!("to {:?}", to);
+        //     println!("self {:?}", self);
+        //     println!("{}", Backtrace::capture());
+        // }
+
         fn swap_formula(o: &Formula, from: &Identifier, to: &Identifier) -> Option<Formula> {
             if o.sups(from) || o.sups(to) {
                 Some(o.swap(from, to))
@@ -598,7 +719,7 @@ impl Nominal for Rc<Value> {
                         Rc::new(Value::PLam(*j, new_v, m.clone()))
                     }
                 } else {
-                    let new_v = v.swap(j, k).swap(from, to);
+                    let new_v = v.swap(from, to);
                     Rc::new(Value::PLam(*k, new_v, m.clone()))
                 }
             }
@@ -755,46 +876,7 @@ impl Nominal for Rc<Value> {
                 }
             }
             Value::Stuck(t, c, m) => {
-                let mut updated = false;
-
-                let mut term_binds = c.term_binds.clone();
-                for (k, v) in &c.term_binds {
-                    let mut entry_update = false;
-                    let swaped_tpe = v.tpe().swap(from, to);
-                    if !Rc::ptr_eq(&swaped_tpe, &v.tpe()) {
-                        entry_update = true;
-                    }
-                    let swapped_value = match v.value() {
-                        EntryValueState::Cached(value) => {
-                            let swapped = value.swap(from, to);
-                            if !Rc::ptr_eq(&swapped, &value) {
-                                entry_update = true;
-                            }
-                            EntryValueState::Cached(swapped)
-                        }
-                        lazy => lazy.clone(),
-                    };
-                    if entry_update {
-                        updated = true;
-                        term_binds =
-                            term_binds.insert(*k, Entry::new_state(swapped_value, &swaped_tpe));
-                    }
-                }
-                let mut formula_binds = c.formula_binds.clone();
-                for (k, v) in &c.formula_binds {
-                    let acted_v = v.swap(from, to);
-                    if &acted_v != v {
-                        updated = true;
-                        formula_binds = formula_binds.insert(*k, acted_v);
-                    }
-                }
-
-                if updated {
-                    let new_c = Closure {
-                        shadowed: c.shadowed.clone(),
-                        term_binds,
-                        formula_binds,
-                    };
+                if let Some(new_c) = swap_closure(c, from, to) {
                     Rc::new(Value::Stuck(t.clone(), new_c, m.clone()))
                 } else {
                     self.clone()
@@ -830,7 +912,7 @@ where
                     let mut delta_ = delta.clone();
                     delta_.binds.remove(i);
                     let db = delta.meet(&beta);
-                    let t = u.clone().face(ctx, &delta_)?;
+                    let t = u.face(ctx, &delta_)?;
                     result.insert(db, t);
                 }
             } else {
@@ -994,4 +1076,26 @@ where
         .iter()
         .map(|(f, _)| Ok((f.clone(), value.face(ctx, f)?)))
         .collect::<Result<_, TypeError>>()
+}
+
+mod tests {
+    use std::collections::HashMap;
+
+    use crate::{
+        ctt::term::{Dir, Face, Identifier, System},
+        precise::term::Value,
+        typechecker::context::TypeContext,
+    };
+
+    use super::disj;
+
+    #[test]
+    fn act_system() {
+        let s = System::from(HashMap::from([(
+            Face::cond(&Identifier(0), Dir::One),
+            Value::u(),
+        )]));
+        let k = disj(&TypeContext::empty(), &s, &Identifier(0), &Identifier(1));
+        println!("k {:?}", k);
+    }
 }

@@ -4,6 +4,7 @@ use crate::typechecker::canon::eval::eval;
 use crate::typechecker::canon::heat::PathIndex;
 use crate::typechecker::error::TypeError;
 use rpds::{HashTrieMap, HashTrieSet};
+use std::backtrace::Backtrace;
 use std::cell::RefCell;
 use std::collections::HashSet;
 use std::fmt::Debug;
@@ -11,7 +12,7 @@ use std::rc::Rc;
 use tracing::trace_span;
 
 use super::canon::eval::eval_system;
-use super::canon::nominal::Facing;
+use super::canon::nominal::{act_closure, Facing};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum EntryValueState {
@@ -22,7 +23,6 @@ pub enum EntryValueState {
 #[derive(Clone)]
 pub enum EntryInner {
     Frozen {
-        tpe: Rc<Value>,
         value: EntryValueState,
     },
     Faced {
@@ -35,11 +35,7 @@ pub enum EntryInner {
 impl Debug for EntryInner {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Frozen { tpe, value } => f
-                .debug_struct("Frozen")
-                .field("tpe", tpe)
-                .field("value", value)
-                .finish(),
+            Self::Frozen { value } => f.debug_struct("Frozen").field("value", value).finish(),
             Self::Faced { inner, face, .. } => f
                 .debug_struct("Faced")
                 .field("inner", inner)
@@ -52,16 +48,9 @@ impl Debug for EntryInner {
 impl PartialEq for EntryInner {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
-            (
-                Self::Frozen {
-                    tpe: l_tpe,
-                    value: l_value,
-                },
-                Self::Frozen {
-                    tpe: r_tpe,
-                    value: r_value,
-                },
-            ) => l_tpe == r_tpe && l_value == r_value,
+            (Self::Frozen { value: l_value }, Self::Frozen { value: r_value }) => {
+                l_value == r_value
+            }
             (
                 Self::Faced {
                     ctx: l_ctx,
@@ -91,48 +80,32 @@ impl EntryInner {
         match self {
             EntryInner::Frozen { value, .. } => value.clone(),
             EntryInner::Faced { ctx, face, inner } => {
-                let (tpe, value) = {
+                let value = {
                     let mut inner = inner.borrow_mut();
-                    let new_tpe = inner.tpe().face(ctx, &face).unwrap();
-                    let new_value = match inner.value() {
+                    match inner.value() {
                         EntryValueState::Cached(value) => {
                             EntryValueState::Cached(value.face(ctx, face).unwrap())
                         }
-                        lazy => lazy.clone(),
-                    };
-                    (new_tpe, new_value)
+                        EntryValueState::Lazy(term, c) => {
+                            let mut new_closure = None;
+                            for (i, d) in &face.binds {
+                                new_closure = act_closure(
+                                    ctx,
+                                    new_closure.as_ref().unwrap_or(&c),
+                                    i,
+                                    Formula::Dir(d.clone()),
+                                )
+                                .unwrap();
+                            }
+                            EntryValueState::Lazy(term, new_closure.unwrap_or(c))
+                        }
+                    }
                 };
                 let new_inner = EntryInner::Frozen {
-                    tpe: tpe.clone(),
                     value: value.clone(),
                 };
                 *self = new_inner;
                 value
-            }
-        }
-    }
-
-    fn tpe(&mut self) -> Rc<Value> {
-        match self {
-            EntryInner::Frozen { tpe, .. } => tpe.clone(),
-            EntryInner::Faced { ctx, face, inner } => {
-                let (tpe, value) = {
-                    let mut inner = inner.borrow_mut();
-                    let new_tpe = inner.tpe().face(ctx, &face).unwrap();
-                    let new_value = match inner.value() {
-                        EntryValueState::Cached(value) => {
-                            EntryValueState::Cached(value.face(ctx, face).unwrap())
-                        }
-                        lazy => lazy.clone(),
-                    };
-                    (new_tpe, new_value)
-                };
-                let new_inner = EntryInner::Frozen {
-                    tpe: tpe.clone(),
-                    value: value.clone(),
-                };
-                *self = new_inner;
-                tpe
             }
         }
     }
@@ -144,38 +117,29 @@ pub struct Entry {
 }
 
 impl Entry {
-    pub fn new(value: &Rc<Value>, tpe: &Rc<Value>) -> Entry {
+    pub fn new(value: &Rc<Value>) -> Entry {
         Entry {
             inner: Rc::new(RefCell::new(EntryInner::Frozen {
-                tpe: tpe.clone(),
                 value: EntryValueState::Cached(value.clone()),
             })),
         }
     }
-    pub fn lazy(ctx: &TypeContext, name: &Identifier, value: &Rc<Term>, tpe: &Rc<Value>) -> Entry {
+    pub fn lazy(ctx: &TypeContext, name: &Identifier, value: &Rc<Term>) -> Entry {
         Entry {
             inner: Rc::new(RefCell::new(EntryInner::Frozen {
-                tpe: tpe.clone(),
                 value: EntryValueState::Lazy(value.clone(), ctx.closure_rec(value, name)),
             })),
         }
     }
 
-    pub fn new_state(state: EntryValueState, tpe: &Rc<Value>) -> Entry {
+    pub fn new_state(state: EntryValueState) -> Entry {
         Entry {
-            inner: Rc::new(RefCell::new(EntryInner::Frozen {
-                tpe: tpe.clone(),
-                value: state,
-            })),
+            inner: Rc::new(RefCell::new(EntryInner::Frozen { value: state })),
         }
     }
 
     pub fn value(&self) -> EntryValueState {
         self.inner.borrow_mut().value()
-    }
-
-    pub fn tpe(&self) -> Rc<Value> {
-        self.inner.borrow_mut().tpe()
     }
 
     pub fn face(&self, ctx: TypeContext, face: &Face) -> Entry {
@@ -192,6 +156,7 @@ impl Entry {
 #[derive(Clone)]
 pub struct TypeContext {
     term_binds: HashTrieMap<Identifier, Entry>,
+    type_binds: HashTrieMap<Identifier, Entry>,
     shadowed: HashTrieSet<Identifier>,
     formula_binds: HashTrieMap<Identifier, Formula>,
     counter: Rc<RefCell<usize>>,
@@ -204,6 +169,7 @@ impl TypeContext {
     pub fn empty() -> TypeContext {
         TypeContext {
             term_binds: HashTrieMap::new(),
+            type_binds: HashTrieMap::new(),
             shadowed: HashTrieSet::new(),
             formula_binds: HashTrieMap::new(),
             counter: Rc::new(RefCell::new(99999)),
@@ -216,6 +182,7 @@ impl TypeContext {
     pub fn new(notifier: Rc<dyn ProgressNotifier>) -> TypeContext {
         TypeContext {
             term_binds: HashTrieMap::new(),
+            type_binds: HashTrieMap::new(),
             shadowed: HashTrieSet::new(),
             formula_binds: HashTrieMap::new(),
             counter: Rc::new(RefCell::new(99999)),
@@ -228,6 +195,7 @@ impl TypeContext {
     pub fn opaque(&self, name: Identifier) -> TypeContext {
         TypeContext {
             term_binds: self.term_binds.clone(),
+            type_binds: self.type_binds.clone(),
             shadowed: self.shadowed.insert(name),
             formula_binds: self.formula_binds.clone(),
             counter: self.counter.clone(),
@@ -240,6 +208,7 @@ impl TypeContext {
     pub fn transparent(&self, name: Identifier) -> TypeContext {
         TypeContext {
             term_binds: self.term_binds.clone(),
+            type_binds: self.type_binds.clone(),
             shadowed: self.shadowed.remove(&name),
             formula_binds: self.formula_binds.clone(),
             counter: self.counter.clone(),
@@ -252,6 +221,7 @@ impl TypeContext {
     pub fn transparent_all(&self) -> TypeContext {
         TypeContext {
             term_binds: self.term_binds.clone(),
+            type_binds: self.type_binds.clone(),
             shadowed: HashTrieSet::new(),
             formula_binds: self.formula_binds.clone(),
             counter: self.counter.clone(),
@@ -263,15 +233,39 @@ impl TypeContext {
 
     pub fn fresh(&self) -> Identifier {
         let res = *self.counter.borrow_mut();
+        // if res == 133159 {
+        //     println!("133159");
+        //     println!("{}", Backtrace::capture());
+        // }
+        // if res == 135308 {
+        //     println!("135308");
+        //     println!("{}", Backtrace::capture());
+        // }
         *self.counter.borrow_mut() += 1;
         Identifier(res)
     }
 
     // #[instrument(skip(self))]
     pub fn lookup_tpe(&self, name: &Identifier) -> Option<Rc<Value>> {
-        let e = self.term_binds.get(name).cloned()?;
-        let tpe = e.tpe();
-        Some(tpe)
+        let e = self.type_binds.get(name).cloned()?;
+        match e.value() {
+            EntryValueState::Lazy(term, c) => {
+                let rec_ctx = self.in_closure(&c).with_term(
+                    &name,
+                    &Value::stuck(
+                        term.as_ref().clone(),
+                        self.in_closure(&c).closure_rec(&term, name),
+                        Mod::Precise,
+                    ),
+                );
+                let check_span = trace_span!("def_eval", def = ?name);
+                let _enter = check_span.enter();
+                let value = eval(&rec_ctx, &term).unwrap();
+                drop(_enter);
+                Some(value)
+            }
+            EntryValueState::Cached(value) => Some(value),
+        }
     }
 
     // #[instrument(skip(self))]
@@ -289,7 +283,6 @@ impl TypeContext {
                             self.in_closure(&c).closure_rec(&term, name),
                             Mod::Precise,
                         ),
-                        &e.tpe(),
                     );
                     let check_span = trace_span!("def_eval", def = ?name);
                     let _enter = check_span.enter();
@@ -313,7 +306,8 @@ impl TypeContext {
             for label in labels {
                 if let Label::PLabel(_, t, is, sys) = label {
                     if t.variables.len() == 0 && is.len() == 1 && sys.len() == 2 {
-                        let sys = eval_system(self, sys).unwrap();
+                        let sys_ctx = self.with_formula(&is[0], Formula::Atom(is[0]));
+                        let sys = eval_system(&sys_ctx, sys).unwrap();
                         let endpoints = sys.values().collect::<Vec<_>>();
                         self.path_index.borrow_mut().add(endpoints[0], endpoints[1]);
                     }
@@ -322,12 +316,29 @@ impl TypeContext {
         }
     }
 
-    pub fn with_term(&self, name: &Identifier, value: &Rc<Value>, tpe: &Rc<Value>) -> TypeContext {
+    pub fn with_term(&self, name: &Identifier, value: &Rc<Value>) -> TypeContext {
         if let Value::Stuck(t, _, _) = value.as_ref() {
             self.analyze_hsum(t);
         }
         TypeContext {
-            term_binds: self.term_binds.insert(*name, Entry::new(value, tpe)),
+            term_binds: self.term_binds.insert(*name, Entry::new(value)),
+            type_binds: self.type_binds.clone(),
+            shadowed: self.shadowed.clone(),
+            formula_binds: self.formula_binds.clone(),
+            counter: self.counter.clone(),
+            path_index: self.path_index.clone(),
+            is_compact: self.is_compact,
+            notifier: self.notifier.clone(),
+        }
+    }
+
+    pub fn with_tpe(&self, name: &Identifier, tpe: &Rc<Value>) -> TypeContext {
+        if let Value::Stuck(t, _, _) = tpe.as_ref() {
+            self.analyze_hsum(t);
+        }
+        TypeContext {
+            term_binds: self.term_binds.clone(),
+            type_binds: self.type_binds.insert(*name, Entry::new(tpe)),
             shadowed: self.shadowed.clone(),
             formula_binds: self.formula_binds.clone(),
             counter: self.counter.clone(),
@@ -341,13 +352,14 @@ impl TypeContext {
         &self,
         name: &Identifier,
         value: &Rc<Term>,
-        tpe: &Rc<Value>,
+        tpe: &Rc<Term>,
     ) -> TypeContext {
         self.analyze_hsum(value.as_ref());
         TypeContext {
             term_binds: self
                 .term_binds
-                .insert(*name, Entry::lazy(self, name, value, tpe)),
+                .insert(*name, Entry::lazy(self, name, value)),
+            type_binds: self.type_binds.insert(*name, Entry::lazy(self, name, tpe)),
             shadowed: self.shadowed.clone(),
             formula_binds: self.formula_binds.clone(),
             counter: self.counter.clone(),
@@ -371,12 +383,18 @@ impl TypeContext {
             .iter()
             .map(|(k, v)| (*k, v.face(acc.clone(), face)))
             .collect();
+        acc.type_binds = acc
+            .type_binds
+            .iter()
+            .map(|(k, v)| (*k, v.face(acc.clone(), face)))
+            .collect();
         Ok(acc)
     }
 
     pub fn with_formula(&self, name: &Identifier, formula: Formula) -> TypeContext {
         TypeContext {
             term_binds: self.term_binds.clone(),
+            type_binds: self.type_binds.clone(),
             shadowed: self.shadowed.clone(),
             formula_binds: self.formula_binds.insert(*name, formula),
             counter: self.counter.clone(),
@@ -390,8 +408,7 @@ impl TypeContext {
         let mut new_ctx = self.clone();
         if let DeclarationSet::Mutual(decls) = decls {
             for decl in decls {
-                let tpe = eval(&new_ctx, &decl.tpe)?;
-                new_ctx = new_ctx.with_lazy_term(&decl.name, &decl.body, &tpe);
+                new_ctx = new_ctx.with_lazy_term(&decl.name, &decl.body, &decl.tpe);
             }
         } else {
             todo!();
@@ -413,6 +430,10 @@ impl TypeContext {
                 )
             })
             .collect();
+        let type_binds = free_vars
+            .iter()
+            .filter_map(|v| Some((v.clone(), self.type_binds.get(v)?.clone())))
+            .collect();
         let shadowed = free_vars
             .into_iter()
             .filter(|n| self.shadowed.contains(n))
@@ -424,6 +445,7 @@ impl TypeContext {
         Closure {
             shadowed,
             term_binds,
+            type_binds,
             formula_binds,
         }
     }
@@ -443,6 +465,10 @@ impl TypeContext {
                 )
             })
             .collect();
+        let type_binds = free_vars
+            .iter()
+            .filter_map(|v| Some((v.clone(), self.type_binds.get(v)?.clone())))
+            .collect();
         let shadowed = free_vars
             .into_iter()
             .filter(|n| self.shadowed.contains(n))
@@ -453,6 +479,45 @@ impl TypeContext {
             .collect();
         Closure {
             term_binds,
+            type_binds,
+            shadowed,
+            formula_binds,
+        }
+    }
+
+    pub fn closure_mutuals(&self, t: &Rc<Term>, names: &[Identifier]) -> Closure {
+        println!("mutuals {:?}", names);
+        let (mut free_vars, free_fs) = free_vars(&t);
+        for name in names {
+            free_vars.remove(name);
+        }
+        let term_binds = free_vars
+            .iter()
+            .map(|v| {
+                (
+                    v.clone(),
+                    self.term_binds
+                        .get(v)
+                        .expect(&format!("unfound var {:?}", v))
+                        .clone(),
+                )
+            })
+            .collect();
+        let type_binds = free_vars
+            .iter()
+            .filter_map(|v| Some((v.clone(), self.type_binds.get(v)?.clone())))
+            .collect();
+        let shadowed = free_vars
+            .into_iter()
+            .filter(|n| self.shadowed.contains(n))
+            .collect();
+        let formula_binds = free_fs
+            .iter()
+            .map(|v| (v.clone(), self.formula_binds[v].clone()))
+            .collect();
+        Closure {
+            term_binds,
+            type_binds,
             shadowed,
             formula_binds,
         }
@@ -463,6 +528,12 @@ impl TypeContext {
             .term_binds
             .iter()
             .fold(self.term_binds.clone(), |acc, (k, v)| {
+                acc.insert(*k, v.clone())
+            });
+        let type_binds = c
+            .type_binds
+            .iter()
+            .fold(self.type_binds.clone(), |acc, (k, v)| {
                 acc.insert(*k, v.clone())
             });
         let formula_binds = c
@@ -478,6 +549,7 @@ impl TypeContext {
         }
         TypeContext {
             term_binds,
+            type_binds,
             shadowed,
             formula_binds,
             counter: self.counter.clone(),
@@ -490,6 +562,7 @@ impl TypeContext {
     pub fn uncompacted(&self) -> TypeContext {
         TypeContext {
             term_binds: self.term_binds.clone(),
+            type_binds: self.type_binds.clone(),
             shadowed: self.shadowed.clone(),
             formula_binds: self.formula_binds.clone(),
             counter: self.counter.clone(),
@@ -568,6 +641,8 @@ fn free_vars_helper(
                 DeclarationSet::Mutual(declarations) => {
                     for decl in declarations {
                         new_bound.insert(decl.name);
+                    }
+                    for decl in declarations {
                         free_vars_helper(&decl.body, free_vars, free_is, &new_bound, bound_is);
                         free_vars_helper(&decl.tpe, free_vars, free_is, &new_bound, bound_is);
                     }

@@ -16,7 +16,7 @@ use super::{
     app::{app, app_formula},
     eval::{equiv_contr, equiv_dom, equiv_fun, eval, get_first, get_second, pcon},
     glue::{glue_elem, unglue, unglue_u},
-    nominal::{border, conj, disj, sym, Facing},
+    nominal::{border, conj, disj, sym, Facing, Nominal},
 };
 
 pub fn fill_line(
@@ -26,7 +26,6 @@ pub fn fill_line(
     ts: &System<Value>,
 ) -> Result<Rc<Value>, TypeError> {
     let i = ctx.fresh();
-    let ctx = ctx.with_formula(&i, Formula::Atom(i));
 
     let new_system = ts
         .iter()
@@ -35,7 +34,7 @@ pub fn fill_line(
     Ok(Value::plam(
         i,
         &fill(
-            &ctx.with_formula(&i, Formula::Atom(i)),
+            &ctx,
             &i,
             &app_formula(&ctx, a, Formula::Atom(i))?,
             u,
@@ -53,7 +52,6 @@ pub fn fill(
     ts: System<Value>,
 ) -> Result<Rc<Value>, TypeError> {
     let j = ctx.fresh();
-    let ctx = ctx.with_formula(&j, Formula::Atom(j));
     comp(
         &ctx,
         &j,
@@ -71,7 +69,6 @@ pub fn comp_line(
 ) -> Result<Rc<Value>, TypeError> {
     let i = ctx.fresh();
 
-    let ctx = ctx.with_formula(&i, Formula::Atom(i));
     let new_system = ts
         .iter()
         .map(|(f, v)| Ok((f.clone(), app_formula(&ctx, v, Formula::Atom(i))?)))
@@ -154,7 +151,6 @@ pub fn comp(
     match a.as_ref() {
         Value::PathP(p, v0, v1, _) => {
             let j = ctx.fresh();
-            let ctx = ctx.with_formula(&j, Formula::Atom(j));
             let system = ts
                 .iter()
                 .map(|(k, v)| Ok((k.clone(), app_formula(&ctx, v, Formula::Atom(j))?)))
@@ -177,7 +173,6 @@ pub fn comp(
         Value::Id(b, v0, v1, _) => match u.as_ref() {
             Value::IdPair(r, _, _) if ts.values().all(is_id_pair) => {
                 let j = ctx.fresh();
-                let ctx = ctx.with_formula(&j, Formula::Atom(j));
 
                 let system = ts
                     .iter()
@@ -273,7 +268,7 @@ pub fn comp(
                     let et = eval(&new_ctx, tpe)?;
                     let v = fill(&new_ctx, i, &et, &ns[ind], system.clone())?;
                     let vi1 = comp(&new_ctx, i, &et, &ns[ind], &system)?;
-                    new_ctx = new_ctx.with_term(name, &v, &et);
+                    new_ctx = new_ctx.with_term(name, &v);
                     vs.push(vi1);
                 }
                 Ok(Value::con(*n, vs, Mod::Precise))
@@ -316,7 +311,7 @@ fn is_comp_neutral(
     u0: &Rc<Value>,
     ts: &System<Value>,
 ) -> Result<bool, TypeError> {
-    let equivsi0 = equivs.face(ctx, &Face::cond(i, Dir::One))?;
+    let equivsi0 = equivs.face(ctx, &Face::cond(i, Dir::Zero))?;
     Ok((!equivsi0.contains(&Face::eps()) && u0.is_neutral())
         || ts
             .iter()
@@ -449,6 +444,7 @@ fn comp_u(
                 let sys1_face = system1.face(ctx, gamma)?;
                 let sys2_face = system2.face(ctx, gamma)?;
 
+                // TODO make union
                 for (k, _) in sys1_face.iter() {
                     fibs_gamma.insert(k.clone(), (sys1_face[k].clone(), sys2_face[k].clone()));
                 }
@@ -678,6 +674,7 @@ fn comp_glue(
                 fibersys.face(ctx, gamma)?.into_iter(),
             )
             .collect();
+            // TODO make union
             let combined = fibs_gamma;
             let fiber_type = mk_fiber_type(
                 ctx,
@@ -910,7 +907,7 @@ fn transps(
         let t = eval(&new_ctx, a)?;
         let v = trans_fill(&new_ctx, i, &t, u)?;
         let vi1 = trans(&new_ctx, i, &t, u)?;
-        new_ctx = new_ctx.with_term(x, &v, &t);
+        new_ctx = new_ctx.with_term(x, &v);
         vs.push(vi1);
     }
 
@@ -929,15 +926,16 @@ fn squeezes(
     let mut vs = vec![];
 
     for ((x, a), u) in xas.iter().zip(us) {
+        let k = ctx.fresh();
         let ts = System::from(HashMap::from([(
-            Face::cond(i, Dir::One),
-            u.face(&ctx, &Face::cond(i, Dir::One))?,
+            Face::cond(&k, Dir::One),
+            u.face(&ctx, &Face::cond(&k, Dir::One))?,
         )]));
         let va = disj(&ctx, &eval(&ctx, a)?, i, &j)?;
         let v = disj(&ctx, &fill(&ctx, &j, &va, u, ts.clone())?, i, &j)?;
         let vi1 = disj(&ctx, &comp(&ctx, &j, &va, u, &ts)?, i, &j)?;
-        ctx = ctx.with_term(x, &v, &va);
-        vs.push(vi1);
+        ctx = ctx.with_term(x, &v.act(&ctx, &k, Formula::Atom(*i))?);
+        vs.push(vi1.act(&ctx, &k, Formula::Atom(*i))?);
     }
     Ok(vs)
 }
@@ -982,12 +980,11 @@ fn mk_fiber_type(
     let ty = Term::var(y_lit, Mod::Precise);
     let tf = Term::var(f_lit, Mod::Precise);
     let tt = Term::var(t_lit, Mod::Precise);
-    let hole_tpe = Value::stuck(Term::Hole, ctx.closure(&Rc::new(Term::Hole)), Mod::Precise);
     let ctx = TypeContext::empty()
-        .with_term(&a_lit, a, &hole_tpe)
-        .with_term(&x_lit, x, &hole_tpe)
-        .with_term(&f_lit, &equiv_fun(equiv), &hole_tpe)
-        .with_term(&t_lit, &equiv_dom(equiv), &hole_tpe);
+        .with_term(&a_lit, a)
+        .with_term(&x_lit, x)
+        .with_term(&f_lit, &equiv_fun(equiv))
+        .with_term(&t_lit, &equiv_dom(equiv));
 
     eval(
         &ctx,

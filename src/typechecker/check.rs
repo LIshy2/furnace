@@ -21,7 +21,9 @@ fn check_family(ctx: &TypeContext, f: &Rc<Term>) -> Result<(), TypeError> {
     };
     check(ctx, tpe, &Value::u())?;
     let tpe = eval(ctx, tpe)?;
-    let body_ctx: TypeContext = ctx.with_term(name, &Value::var(*name, Mod::Precise), &tpe);
+    let body_ctx = ctx
+        .with_term(name, &Value::var(*name, Mod::Precise))
+        .with_tpe(name, &tpe);
     check(&body_ctx, body, &Value::u())
 }
 
@@ -29,7 +31,9 @@ fn check_tele(ctx: &TypeContext, tele: &Telescope<Term>) -> Result<TypeContext, 
     let mut result = ctx.clone();
     for (name, tpe) in tele.variables.iter() {
         check(&result, tpe, &Value::u())?;
-        result = result.with_term(name, &Value::var(*name, Mod::Precise), &eval(&result, tpe)?);
+        result = result
+            .with_term(name, &Value::var(*name, Mod::Precise))
+            .with_tpe(name, &eval(&result, tpe)?);
     }
     Ok(result)
 }
@@ -45,28 +49,38 @@ fn check_branch(
 ) -> Result<(), TypeError> {
     match (label, branch) {
         (Label::OLabel(_, tele), Branch::OBranch(c, ns, body)) => {
-            let mut branch_ctx = ctx.clone();
             let mut vars = vec![];
-            for ((_, tpe), bind) in tele.variables.iter().zip(ns) {
+            let mut branch_ctx = ctx.clone();
+            let mut tpe_ctx = data_ctx.clone();
+            for ((tpe_bind, tpe), bind) in tele.variables.iter().zip(ns) {
                 let var = Value::var(*bind, Mod::Precise);
                 vars.push(var.clone());
-                branch_ctx = branch_ctx.with_term(bind, &var, &eval(data_ctx, tpe)?);
+                let etpe = eval(&tpe_ctx, tpe)?;
+                branch_ctx = branch_ctx.with_term(bind, &var).with_tpe(bind, &etpe);
+                tpe_ctx = tpe_ctx.with_term(tpe_bind, &var).with_tpe(tpe_bind, &etpe);
             }
             let f_tpe = app(&branch_ctx, split_tpe, &Value::con(*c, vars, Mod::Precise))?;
             check(&branch_ctx, body, &f_tpe)
         }
         (Label::PLabel(_, tele, is, ts), Branch::PBranch(c, ns, js, body)) => {
-            let mut sys_ctx = ctx.uncompacted();
+            let mut sys_ctx = data_ctx.uncompacted();
 
+            let mut tpe_ctx = data_ctx.clone();
+
+            for ((name, tpe), bind) in tele.variables.iter().zip(ns) {
+                let etpe = eval(&tpe_ctx, tpe)?;
+                sys_ctx = sys_ctx
+                    .with_term(bind, &Value::var(*bind, Mod::Precise))
+                    .with_tpe(bind, &etpe);
+                sys_ctx = sys_ctx
+                    .with_term(name, &Value::var(*bind, Mod::Precise))
+                    .with_tpe(name, &etpe);
+                tpe_ctx = tpe_ctx
+                    .with_term(name, &Value::var(*bind, Mod::Precise))
+                    .with_tpe(name, &etpe);
+            }
             for (i, j) in is.iter().zip(js) {
                 sys_ctx = sys_ctx.with_formula(i, Formula::Atom(*j));
-            }
-            for ((name, tpe), bind) in tele.variables.iter().zip(ns) {
-                sys_ctx = sys_ctx.with_term(
-                    name,
-                    &Value::var(*bind, Mod::Precise),
-                    &eval(data_ctx, tpe)?,
-                );
             }
             let vts = eval_system(&sys_ctx, ts)?;
             let vgts = System::intersect(&border(&sys_ctx, split, &vts)?, &vts)
@@ -74,14 +88,19 @@ fn check_branch(
                 .collect::<Result<_, TypeError>>()?;
             let mut branch_ctx = ctx.uncompacted();
             let mut vars = vec![];
-            for ((_, tpe), bind) in tele.variables.iter().zip(ns) {
+            let mut tpe_ctx = data_ctx.clone();
+            for ((tpe_bind, tpe), bind) in tele.variables.iter().zip(ns) {
                 let var = Value::var(*bind, Mod::Precise);
                 vars.push(var.clone());
-                branch_ctx = branch_ctx.with_term(bind, &var, &eval(data_ctx, tpe)?);
+                let etpe = eval(&tpe_ctx, tpe)?;
+                branch_ctx = branch_ctx.with_term(bind, &var).with_tpe(bind, &etpe);
+                tpe_ctx = tpe_ctx.with_term(tpe_bind, &var).with_tpe(tpe_bind, &etpe);
             }
             for j in js {
                 branch_ctx = branch_ctx.with_formula(j, Formula::Atom(*j));
             }
+            // println!("split_tpe {:?}", split_tpe);
+            // println!("con {:?}", c);
             let b_tpe = app(
                 &branch_ctx,
                 split_tpe,
@@ -93,6 +112,7 @@ fn check_branch(
                     Mod::Precise,
                 ),
             )?;
+
             check(&branch_ctx, body, &b_tpe)?;
             let ve = eval(&branch_ctx, body)?;
             if Equiv::equiv(&branch_ctx, &border(&branch_ctx, &ve, &vts)?, &vgts)? {
@@ -130,24 +150,25 @@ pub fn check_declaration_set(
     match set {
         DeclarationSet::Mutual(decls) => {
             let mut new_ctx = ctx.clone();
-
+            let mutual_namespace = decls.iter().map(|d| d.name).collect::<Vec<_>>();
             for decl in decls.iter() {
                 ctx.decl_check_started(&decl.name);
                 let tpe = eval(&new_ctx, &decl.tpe)?;
-                let pre_ctx = new_ctx.with_term(
-                    &decl.name,
-                    &Value::stuck(
-                        decl.body.as_ref().clone(),
-                        ctx.closure_rec(&decl.body, &decl.name),
-                        Mod::Precise,
-                    ),
-                    &tpe,
-                );
+                let pre_ctx = new_ctx
+                    .with_term(
+                        &decl.name,
+                        &Value::stuck(
+                            decl.body.as_ref().clone(),
+                            ctx.closure_mutuals(&decl.body, &mutual_namespace),
+                            Mod::Precise,
+                        ),
+                    )
+                    .with_tpe(&decl.name, &tpe);
                 let check_span = trace_span!("check", def = ?decl.name);
                 let _enter = check_span.enter();
                 check(&pre_ctx, &decl.body, &tpe)?;
                 drop(_enter);
-                new_ctx = new_ctx.with_lazy_term(&decl.name, &decl.body, &tpe);
+                new_ctx = new_ctx.with_lazy_term(&decl.name, &decl.body, &decl.tpe);
                 ctx.decl_check_finished(&decl.name);
             }
             Ok(new_ctx)
@@ -207,14 +228,13 @@ pub fn check_plam_system(
         .map(|(alpha, p_alpha)| {
             let face_ctx = ctx.with_face(alpha)?;
             let (a0, a1) = check_plam(&face_ctx, p_alpha, &va.face(ctx, alpha)?)?;
-            if Equiv::equiv(&face_ctx, &a0, &eval(&face_ctx, t0)?.face(&face_ctx, alpha)?)? {
+            if Equiv::equiv(
+                &face_ctx,
+                &a0,
+                &eval(&face_ctx, t0)?.face(&face_ctx, alpha)?,
+            )? {
                 Ok((alpha.clone(), a1))
             } else {
-                println!("FAIL");
-                println!("alpha={:?}", alpha);
-                let evaled = eval(&face_ctx, t0)?;
-                println!("evaled={:?}", &evaled.face(&face_ctx, alpha)?);
-                println!("a0={:?}", &a0);
                 Err(ErrorCause::Hole)?
             }
         })
@@ -233,7 +253,7 @@ fn check_equiv(ctx: &TypeContext, term: &Rc<Term>, tpe: &Rc<Value>) -> Result<()
         let s_lit = ctx.fresh();
         let z_lit = ctx.fresh();
 
-        let new_ctx = ctx.with_term(&a_lit, tpe, &Value::u());
+        let new_ctx = ctx.with_term(&a_lit, tpe).with_tpe(&a_lit, &Value::u());
         let t = Term::var(t_lit, Mod::Precise);
         let a = Term::var(a_lit, Mod::Precise);
         let x = Term::var(x_lit, Mod::Precise);
@@ -383,7 +403,7 @@ pub fn check(ctx: &TypeContext, term: &Rc<Term>, tpe: &Rc<Value>) -> Result<(), 
                 let tpe = eval(&arg_ctx, &tpe)?;
                 check(&arg_ctx, arg, &tpe)?;
                 let arg_v = eval(ctx, arg)?;
-                arg_ctx = arg_ctx.with_term(&name, &arg_v, &tpe);
+                arg_ctx = arg_ctx.with_term(&name, &arg_v);
             }
             Ok(())
         }
@@ -474,7 +494,9 @@ pub fn check(ctx: &TypeContext, term: &Rc<Term>, tpe: &Rc<Value>) -> Result<(), 
             if !Equiv::equiv(ctx, &va, va_)? {
                 Err(ErrorCause::Hole)?;
             }
-            let ctx = ctx.with_term(x, &Value::var(*x, Mod::Precise), &va);
+            let ctx = ctx
+                .with_term(x, &Value::var(*x, Mod::Precise))
+                .with_tpe(x, &va);
             check(&ctx, t, &app(&ctx, lam, &Value::var(*x, Mod::Precise))?)
         }
         (Value::Sigma(va, lam, _), Term::Pair(t1, t2, _)) => {
@@ -494,10 +516,10 @@ pub fn check(ctx: &TypeContext, term: &Rc<Term>, tpe: &Rc<Value>) -> Result<(), 
         (Value::PathP(p, a0, a1, _), Term::PLam(_, _, _)) => {
             let (u0, u1) = check_plam(ctx, term, p)?;
 
-            let conv = Equiv::equiv(ctx, a0, &u0)? && Equiv::equiv(ctx, a1, &u1)?;
-            if conv {
+            if Equiv::equiv(ctx, a0, &u0)? && Equiv::equiv(ctx, a1, &u1)? {
                 Ok(())
             } else {
+                println!("wrong term {:?}", term);
                 Err(ErrorCause::WrongPathEnd((a0.clone(), a1.clone()), (u0, u1)))?
             }
         }

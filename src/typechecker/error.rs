@@ -14,6 +14,7 @@ pub enum ErrorCause {
     },
     ExpectedDataType(Rc<Value>),
     ExpectedSigma(Rc<Value>),
+    ExpectedGlue(Rc<Value>),
     UnEqInIdSystem(Rc<Value>, Rc<Value>),
     UnknownTermName(Identifier),
     Hole,

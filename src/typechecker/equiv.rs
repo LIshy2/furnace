@@ -20,6 +20,10 @@ pub trait Equiv {
 impl Equiv for Rc<Value> {
     // #[instrument(skip_all)]
     fn equiv(ctx: &TypeContext, lhs: &Self, rhs: &Self) -> Result<bool, TypeError> {
+        if lhs.sups(&Identifier(133159)) || rhs.sups(&Identifier(135308)) {
+            println!("eq? {:?} {:?}", lhs, rhs);
+            panic!();
+        }
         match (lhs.as_ref(), rhs.as_ref()) {
             (
                 Value::Stuck(Term::Split(p, _, _, _), _, _),
@@ -65,7 +69,7 @@ impl Equiv for Rc<Value> {
                             Ok(acc? && Equiv::equiv(ctx, l, r)?)
                         })?;
                 if c != c_ {
-                    panic!("AAAA");
+                    panic!("AAAA {:?} {:?}", c, c_);
                 }
                 Ok(c == c_ && field_eq)
             }
@@ -88,7 +92,7 @@ impl Equiv for Rc<Value> {
                             Ok(acc? && Equiv::equiv(ctx, l, r)?)
                         })?;
                 if c != c_ {
-                    panic!("AAAA");
+                    // panic!("AAAA {:?} {:?}", c, c_);
                 }
                 Ok(c == c_ && field_eq && interval_eq && Equiv::equiv(ctx, v, v_)?)
             }
@@ -188,47 +192,47 @@ impl Equiv for Rc<Value> {
                 let a_ = eval(&ctx.in_closure(e_), a_)?;
 
                 let y = ctx.fresh();
-                let eq_ctx = ctx.with_term(&y, &Value::var(y, Mod::Precise), &a);
-                let ctx_lhs: TypeContext =
-                    eq_ctx
-                        .in_closure(e)
-                        .with_term(x, &Value::var(y, Mod::Precise), &a);
-                let ctx_rhs =
-                    eq_ctx
-                        .in_closure(e_)
-                        .with_term(x_, &Value::var(y, Mod::Precise), &a_);
+                let eq_ctx = ctx
+                    .with_term(&y, &Value::var(y, Mod::Precise))
+                    .with_tpe(&y, &a);
+                let ctx_lhs: TypeContext = eq_ctx
+                    .in_closure(e)
+                    .with_term(x, &Value::var(y, Mod::Precise))
+                    .with_tpe(x, &a);
+                let ctx_rhs = eq_ctx
+                    .in_closure(e_)
+                    .with_term(x_, &Value::var(y, Mod::Precise))
+                    .with_tpe(x, &a_);
 
-                if x_ == &Identifier(2647) {
-                    println!("DEBUG");
-                    println!("{:?}", u_);
-                    println!("{:?}", e_);
-                    println!("evaled {:?}", eval(&ctx_rhs, u_)?);
-                }
-                Ok(Equiv::equiv(ctx, &a, &a_)?
-                    && Equiv::equiv(&eq_ctx, &eval(&ctx_lhs, u)?, &eval(&ctx_rhs, u_)?)?)
+                let be1 = eval(&ctx_lhs, u)?;
+                let be2 = eval(&ctx_rhs, u_)?;
+
+                Ok(Equiv::equiv(ctx, &a, &a_)? && Equiv::equiv(&eq_ctx, &be1, &be2)?)
             }
             (Value::Stuck(Term::Lam(x, tpe, u, _), e, _), _) => {
                 let tpe = eval(&ctx.in_closure(e), tpe)?;
 
                 let new_ctx = ctx
                     .in_closure(e)
-                    .with_term(x, &Value::var(*x, Mod::Precise), &tpe);
+                    .with_term(x, &Value::var(*x, Mod::Precise))
+                    .with_tpe(x, &tpe);
 
                 Equiv::equiv(
                     &new_ctx,
-                    &eval(
-                        &new_ctx.with_term(x, &Value::var(*x, Mod::Precise), &tpe),
-                        u,
-                    )?,
+                    &eval(&new_ctx, u)?,
                     &app(&new_ctx, rhs, &Value::var(*x, Mod::Precise))?,
                 )
             }
             (_, Value::Stuck(Term::Lam(x, tpe, u, _), e, _)) => {
+                if x == &Identifier(376) {
+                    println!("in eq {:?}", tpe);
+                }
                 let tpe = eval(&ctx.in_closure(e), tpe)?;
 
                 let new_ctx = ctx
                     .in_closure(e)
-                    .with_term(x, &Value::var(*x, Mod::Precise), &tpe);
+                    .with_term(x, &Value::var(*x, Mod::Precise))
+                    .with_tpe(x, &tpe);
 
                 Equiv::equiv(
                     &new_ctx,
@@ -238,9 +242,9 @@ impl Equiv for Rc<Value> {
             }
             (Value::PLam(i, a, _), Value::PLam(i_, a_, _)) => {
                 let j = ctx.fresh();
-                println!("ttt {:?} {:?}", i, i_);
                 let ctx = ctx.with_formula(&j, Formula::Atom(j));
-                Equiv::equiv(&ctx, &a.swap(i, &j), &a_.swap(i_, &j))
+                let res = Equiv::equiv(&ctx, &a.swap(i, &j), &a_.swap(i_, &j))?;
+                Ok(res)
             }
             (Value::PLam(i, a, _), _) => {
                 let j = ctx.fresh();
@@ -264,7 +268,7 @@ impl Equiv for Rc<Value> {
                 Ok(Equiv::equiv(ctx, u, u_)? && Equiv::equiv(ctx, x, x_)?)
             }
             _ => {
-                panic!("AAAA {:?} {:?}", lhs, rhs);
+                // panic!("AAAA {:?} {:?}", lhs, rhs);
                 Ok(false)
             }
         }
@@ -284,10 +288,12 @@ where
                 if let Some(v2) = rhs.get(k) {
                     if !Equiv::equiv(ctx, v1, v2)? {
                         eq = false;
+                        break;
                     }
                 } else {
-                    panic!("{:?} {:?}", lhs, rhs);
+                    println!("uneq {:?} {:?}", lhs, rhs);
                     eq = false;
+                    break;
                 }
             }
             Ok(eq)

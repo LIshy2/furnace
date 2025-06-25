@@ -1,9 +1,19 @@
 use crate::ctt::term::{Term as CttTerm, Value as CttValue};
+use std::fmt::Debug;
 
-#[derive(Clone, PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Eq)]
 pub enum Mod {
     Precise,
     Relaxed,
+}
+
+impl Debug for Mod {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Precise => write!(f, "1"),
+            Self::Relaxed => write!(f, "0"),
+        }
+    }
 }
 
 pub type Term = CttTerm<Mod>;

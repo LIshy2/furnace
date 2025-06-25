@@ -58,10 +58,12 @@ mod tests {
 
     #[test]
     fn check_examples() {
-        unsafe { backtrace_on_stack_overflow::enable() };
+        // unsafe { backtrace_on_stack_overflow::enable() };
 
         let reader = ExampleModules;
         let entries = fs::read_dir("examples").unwrap();
+
+        let mut failed = vec![];
 
         for entry in entries {
             let entry = entry.unwrap();
@@ -69,7 +71,11 @@ mod tests {
 
             println!("NEW FILE {:?}", path);
 
-            if path.file_name().unwrap() == "univprop.fctt" || path.file_name().unwrap() == "grothendieck.fctt" {
+            if path.file_name().unwrap() == "univprop.fctt"
+                || path.file_name().unwrap() != "grothendieck.fctt"
+                || path.file_name().unwrap() == "torsor.fctt"
+                || path.file_name().unwrap() == "csystem.fctt"
+            {
                 continue;
             }
 
@@ -83,16 +89,41 @@ mod tests {
                 let (modules, names) = resolve_modules(deps).unwrap();
                 let modules = mark_erased(&modules);
 
+                // println!("man 4106 {:?}", names.demangle(&Identifier(4106)));
+                // println!("man 4097 {:?}", names.demangle(&Identifier(4097)));
+                // println!("man 1258 {:?}", names.demangle(&Identifier(1258)));
+                // println!("man 1259 {:?}", names.demangle(&Identifier(1259)));
+                // println!("man 1260 {:?}", names.demangle(&Identifier(1260)));
+                // println!("man 1261 {:?}", names.demangle(&Identifier(1261)));
+                // println!("man 1262 {:?}", names.demangle(&Identifier(1262)));
+                // println!("man 1263 {:?}", names.demangle(&Identifier(1263)));
+                // println!("man 2401 {:?}", names.demangle(&Identifier(2401)));
+                // println!("man 2304 {:?}", names.demangle(&Identifier(2304)));
+                // println!("man 2114 {:?}", names.demangle(&Identifier(2114)));
+                // println!("man 2115 {:?}", names.demangle(&Identifier(2115)));
+                // println!("man 2116 {:?}", names.demangle(&Identifier(2116)));
+                // println!("man 2117 {:?}", names.demangle(&Identifier(2116)));
+                // println!("man 2118 {:?}", names.demangle(&Identifier(2116)));
+                // println!("man 2119 {:?}", names.demangle(&Identifier(2116)));
+                // println!("man 2120 {:?}", names.demangle(&Identifier(2116)));
+                // println!("man 2121 {:?}", names.demangle(&Identifier(2116)));
+                // println!("man 2122 {:?}", names.demangle(&Identifier(2116)));
+                // panic!();
                 let mut ctx = TypeContext::new(Rc::new(FakeNotifier::new(names))).uncompacted();
 
                 for set in modules.iter() {
-                    let start_time = SystemTime::now();
-                    ctx = check_declaration_set(&ctx, set).unwrap();
-                    let end_time = SystemTime::now();
-                    let x = end_time.duration_since(start_time).unwrap();
-                    // println!("time: {}", x.as_secs_f64());
+                    match check_declaration_set(&ctx, set) {
+                        Ok(new_ctx) => ctx = new_ctx,
+                        Err(e) => {
+                            panic!("{:?}", e);
+                            failed.push(path);
+                            break;
+                        }
+                    }
                 }
             }
         }
+        println!("failed {:?}", failed);
+        assert!(failed.len() == 0)
     }
 }

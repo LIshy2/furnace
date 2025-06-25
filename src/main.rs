@@ -109,7 +109,7 @@ fn main() {
     // let (non_blocking_writer, _guard) = non_blocking(file_appender);
 
     // tracing_subscriber::fmt()
-    //     .with_ansi(false) // Отключаем ANSI-цвета для файла
+    //     .with_ansi(false)
     //     .with_writer(non_blocking_writer)
     //     .with_span_events(FmtSpan::FULL)
     //     .init();
@@ -124,9 +124,6 @@ fn main() {
             .unwrap();
 
         let (modules, names) = resolve_modules(deps).unwrap();
-
-        // println!("man {:?}", names.demangle(&Identifier(42)));
-        // println!("man {:?}", names.demangle(&Identifier(48)));
 
         let modules = mark_erased(&modules);
 

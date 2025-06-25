@@ -1,3 +1,4 @@
+use std::cmp::Ordering;
 use std::collections::hash_map::IntoIter;
 use std::collections::HashMap;
 use std::fmt::Debug;
@@ -10,6 +11,7 @@ use rpds::HashTrieMap;
 use rpds::HashTrieSet;
 
 use crate::typechecker::context::Entry;
+use crate::typechecker::context::EntryValueState;
 use crate::utils::intersect;
 
 #[derive(Copy, Clone, Hash, Eq, PartialEq, Ord, PartialOrd, Debug)]
@@ -197,6 +199,19 @@ impl Face {
         }
         result
     }
+
+    pub fn leq(&self, other: &Face) -> bool {
+        for (b, d1) in &other.binds {
+            if let Some(d2) = self.binds.get(b) {
+                if d1 != d2 {
+                    return false;
+                }
+            } else {
+                return false;
+            }
+        }
+        return true;
+    }
 }
 
 impl Hash for Face {
@@ -227,9 +242,16 @@ impl<A: Clone> System<A> {
         self.binds.iter().flat_map(|(f, _)| f.domain()).collect()
     }
 
-    pub fn insert(&self, face: Face, bind: Rc<A>) -> System<A> {
+    pub fn insert(&self, alpha: Face, bind: Rc<A>) -> System<A> {
         let mut result = self.clone();
-        result.binds.insert(face, bind);
+        if !result.binds.iter().any(|(beta, _)| alpha.leq(beta)) {
+            result.binds = result
+                .binds
+                .into_iter()
+                .filter(|(gamma, _)| !gamma.leq(&alpha))
+                .collect();
+            result.binds.insert(alpha, bind);
+        }
         result
     }
 
@@ -266,7 +288,17 @@ impl<A: Clone> System<A> {
 
 impl<A> From<HashMap<Face, Rc<A>>> for System<A> {
     fn from(value: HashMap<Face, Rc<A>>) -> Self {
-        System { binds: value }
+        let mut result = HashMap::new();
+        for (alpha, v) in value {
+            if !result.iter().any(|(beta, _)| alpha.leq(beta)) {
+                result = result
+                    .into_iter()
+                    .filter(|(gamma, _)| !gamma.leq(&alpha))
+                    .collect();
+                result.insert(alpha, v);
+            }
+        }
+        System { binds: result }
     }
 }
 
@@ -546,25 +578,38 @@ impl<M> Eq for Term<M> {}
 #[derive(Clone, PartialEq, Eq)]
 pub struct Closure {
     pub term_binds: HashTrieMap<Identifier, Entry>,
+    pub type_binds: HashTrieMap<Identifier, Entry>,
     pub formula_binds: HashTrieMap<Identifier, Formula>,
     pub shadowed: HashTrieSet<Identifier>,
 }
 
 impl Debug for Closure {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{{terms: ")?;
+        write!(f, "{{terms: {{")?;
         for (name, e) in self.term_binds.iter() {
             name.fmt(f)?;
+            write!(f, "- ")?;
+            match e.value() {
+                EntryValueState::Lazy(term, _) => {
+                    write!(f, "lazy(")?;
+                    term.fmt(f)?;
+                    write!(f, "lazy)")?;
+                }
+                EntryValueState::Cached(value) => {
+                    value.fmt(f)?;
+                }
+            }
+
             write!(f, ", ")?;
         }
-        write!(f, "formulas: ")?;
+        write!(f, "}}, formulas: {{")?;
         for (name, e) in self.formula_binds.iter() {
             name.fmt(f)?;
             write!(f, ": ")?;
-            e.fmt(f);
+            e.fmt(f)?;
             write!(f, ", ")?;
         }
-        write!(f, "}}")?;
+        write!(f, "}} }}")?;
         Ok(())
     }
 }
