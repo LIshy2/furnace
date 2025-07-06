@@ -7,6 +7,7 @@ use crate::typechecker::context::TypeContext;
 use crate::typechecker::error::TypeError;
 use std::collections::HashSet;
 use std::fmt::Debug;
+use std::panic::AssertUnwindSafe;
 use std::rc::Rc;
 
 use super::canon::app::{app, app_formula};
@@ -68,9 +69,6 @@ impl Equiv for Rc<Value> {
                         .fold(Ok::<bool, TypeError>(true), |acc, (l, r)| {
                             Ok(acc? && Equiv::equiv(ctx, l, r)?)
                         })?;
-                if c != c_ {
-                    panic!("AAAA {:?} {:?}", c, c_);
-                }
                 Ok(c == c_ && field_eq)
             }
             (Value::PCon(c, v, us, phis, _), Value::PCon(c_, v_, us_, phis_, _)) => {
@@ -91,9 +89,6 @@ impl Equiv for Rc<Value> {
                         .fold(Ok::<bool, TypeError>(true), |acc, (l, r)| {
                             Ok(acc? && Equiv::equiv(ctx, l, r)?)
                         })?;
-                if c != c_ {
-                    // panic!("AAAA {:?} {:?}", c, c_);
-                }
                 Ok(c == c_ && field_eq && interval_eq && Equiv::equiv(ctx, v, v_)?)
             }
             (Value::Pair(u, v, _), Value::Pair(u_, v_, _)) => {
@@ -112,12 +107,7 @@ impl Equiv for Rc<Value> {
             (Value::App(u, v, _), Value::App(u_, v_, _)) => {
                 Ok(Equiv::equiv(ctx, u, u_)? && Equiv::equiv(ctx, v, v_)?)
             }
-            (Value::Var(x, _), Value::Var(x_, _)) => {
-                if x != x_ {
-                    println!("AGAAAAA VAR {:?} {:?}", x, x_);
-                }
-                Ok(x == x_)
-            }
+            (Value::Var(x, t, _), Value::Var(x_, t_, _)) => Ok(x == x_),
             (Value::PathP(a, b, c, _), Value::PathP(a_, b_, c_, _)) => {
                 Ok(Equiv::equiv(ctx, a, a_)?
                     && Equiv::equiv(ctx, b, b_)?
@@ -160,10 +150,7 @@ impl Equiv for Rc<Value> {
                 (_, Value::GlueElem(u_, us_, _)) => {
                     Ok(Equiv::equiv(ctx, u, u_)? && Equiv::equiv(ctx, ts, us_)?)
                 }
-                _ => {
-                    println!("FUUUUCK");
-                    Ok(false)
-                }
+                _ => Ok(false),
             },
             (Value::UnGlueElem(u, _, _), Value::UnGlueElem(u_, _, _)) => Equiv::equiv(ctx, u, u_),
             (Value::UnGlueElemU(u, _, _, _), Value::UnGlueElemU(u_, _, _, _)) => {
@@ -192,17 +179,13 @@ impl Equiv for Rc<Value> {
                 let a_ = eval(&ctx.in_closure(e_), a_)?;
 
                 let y = ctx.fresh();
-                let eq_ctx = ctx
-                    .with_term(&y, &Value::var(y, Mod::Precise))
-                    .with_tpe(&y, &a);
+                let eq_ctx = ctx.with_term(&y, &Value::var(y, &a, Mod::Precise));
                 let ctx_lhs: TypeContext = eq_ctx
                     .in_closure(e)
-                    .with_term(x, &Value::var(y, Mod::Precise))
-                    .with_tpe(x, &a);
+                    .with_term(x, &Value::var(y, &a, Mod::Precise));
                 let ctx_rhs = eq_ctx
                     .in_closure(e_)
-                    .with_term(x_, &Value::var(y, Mod::Precise))
-                    .with_tpe(x, &a_);
+                    .with_term(x_, &Value::var(y, &a_, Mod::Precise));
 
                 let be1 = eval(&ctx_lhs, u)?;
                 let be2 = eval(&ctx_rhs, u_)?;
@@ -212,32 +195,35 @@ impl Equiv for Rc<Value> {
             (Value::Stuck(Term::Lam(x, tpe, u, _), e, _), _) => {
                 let tpe = eval(&ctx.in_closure(e), tpe)?;
 
-                let new_ctx = ctx
+                let nx = ctx.fresh();
+
+                let fresh_ctx = ctx.with_term(x, &Value::var(nx, &tpe, Mod::Precise));
+
+                let lambda_ctx = ctx
                     .in_closure(e)
-                    .with_term(x, &Value::var(*x, Mod::Precise))
-                    .with_tpe(x, &tpe);
+                    .with_term(x, &Value::var(nx, &tpe, Mod::Precise));
 
                 Equiv::equiv(
-                    &new_ctx,
-                    &eval(&new_ctx, u)?,
-                    &app(&new_ctx, rhs, &Value::var(*x, Mod::Precise))?,
+                    &fresh_ctx,
+                    &eval(&lambda_ctx, u)?,
+                    &app(&fresh_ctx, rhs, &Value::var(nx, &tpe, Mod::Precise))?,
                 )
             }
             (_, Value::Stuck(Term::Lam(x, tpe, u, _), e, _)) => {
-                if x == &Identifier(376) {
-                    println!("in eq {:?}", tpe);
-                }
                 let tpe = eval(&ctx.in_closure(e), tpe)?;
 
-                let new_ctx = ctx
+                let nx = ctx.fresh();
+
+                let fresh_ctx = ctx.with_term(x, &Value::var(nx, &tpe, Mod::Precise));
+
+                let lambda_ctx = ctx
                     .in_closure(e)
-                    .with_term(x, &Value::var(*x, Mod::Precise))
-                    .with_tpe(x, &tpe);
+                    .with_term(x, &Value::var(nx, &tpe, Mod::Precise));
 
                 Equiv::equiv(
-                    &new_ctx,
-                    &app(&new_ctx, lhs, &Value::var(*x, Mod::Precise))?,
-                    &eval(&new_ctx, u)?,
+                    &fresh_ctx,
+                    &app(&fresh_ctx, lhs, &Value::var(nx, &tpe, Mod::Precise))?,
+                    &eval(&lambda_ctx, u)?,
                 )
             }
             (Value::PLam(i, a, _), Value::PLam(i_, a_, _)) => {
@@ -267,10 +253,7 @@ impl Equiv for Rc<Value> {
             (Value::AppFormula(u, x, _), Value::AppFormula(u_, x_, _)) => {
                 Ok(Equiv::equiv(ctx, u, u_)? && Equiv::equiv(ctx, x, x_)?)
             }
-            _ => {
-                // panic!("AAAA {:?} {:?}", lhs, rhs);
-                Ok(false)
-            }
+            _ => Ok(false),
         }
     }
 }
@@ -291,14 +274,12 @@ where
                         break;
                     }
                 } else {
-                    println!("uneq {:?} {:?}", lhs, rhs);
                     eq = false;
                     break;
                 }
             }
             Ok(eq)
         } else {
-            println!("WRONG LEN");
             Ok(false)
         }
     }

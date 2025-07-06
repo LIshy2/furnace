@@ -105,9 +105,7 @@ pub fn eval(ctx: &TypeContext, term: &Rc<Term>) -> Result<Rc<Value>, TypeError> 
             let ee = eval(ctx, e)?;
             match app_formula(ctx, &ee, eval_formula(ctx, phi)) {
                 Ok(r) => Ok(r),
-                Err(e) => {
-                    Err(e)
-                }
+                Err(e) => Err(e),
             }
         }
         Term::Comp(a, t0, ts, _) => {
@@ -187,7 +185,7 @@ pub fn eval_formula(ctx: &TypeContext, formula: &Formula) -> Formula {
 
 // #[instrument(skip_all)]
 pub fn eval_system(ctx: &TypeContext, system: &System<Term>) -> Result<System<Value>, TypeError> {
-    let mut hm = HashMap::new();
+    let mut presystem = Vec::new();
     for (alpha, t_alpha) in system.iter() {
         let mut betas = HashSet::from([Face::eps()]);
         for (i, d) in alpha.binds.iter() {
@@ -204,10 +202,20 @@ pub fn eval_system(ctx: &TypeContext, system: &System<Term>) -> Result<System<Va
             betas = new_betas.into_iter().collect::<HashSet<_>>()
         }
         for beta in betas {
-            let new_ctx = ctx.with_face(&beta)?;
-            let e = eval(&new_ctx, t_alpha)?;
-            hm.insert(beta, e);
+            if !presystem.iter().any(|(f, _)| beta.leq(f)) {
+                presystem = presystem
+                    .into_iter()
+                    .filter(|(gamma, _)| !gamma.leq(&beta))
+                    .collect();
+                presystem.push((beta, t_alpha));
+            }
         }
+    }
+    let mut hm = HashMap::new();
+    for (alpha, t_alpha) in presystem {
+        let new_ctx = ctx.with_face(&alpha)?;
+        let e = eval(&new_ctx, t_alpha)?;
+        hm.insert(alpha, e);
     }
     Ok(System::from(hm))
 }

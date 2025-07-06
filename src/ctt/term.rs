@@ -226,12 +226,20 @@ impl Hash for Face {
     }
 }
 
-#[derive(Clone, PartialEq, Eq, Debug)]
+#[derive(PartialEq, Eq, Debug)]
 pub struct System<A> {
     binds: HashMap<Face, Rc<A>>,
 }
 
-impl<A: Clone> System<A> {
+impl<A> Clone for System<A> {
+    fn clone(&self) -> Self {
+        Self {
+            binds: self.binds.clone(),
+        }
+    }
+}
+
+impl<A> System<A> {
     pub fn empty() -> System<A> {
         System {
             binds: HashMap::new(),
@@ -249,6 +257,7 @@ impl<A: Clone> System<A> {
                 .binds
                 .into_iter()
                 .filter(|(gamma, _)| !gamma.leq(&alpha))
+                .map(|(f, a)| (f.clone(), a.clone()))
                 .collect();
             result.binds.insert(alpha, bind);
         }
@@ -265,10 +274,6 @@ impl<A: Clone> System<A> {
 
     pub fn iter(&self) -> impl Iterator<Item = (&Face, &Rc<A>)> {
         self.binds.iter()
-    }
-
-    pub fn into_iter(self) -> impl Iterator<Item = (Face, Rc<A>)> {
-        self.binds.into_iter()
     }
 
     pub fn values(&self) -> impl Iterator<Item = &Rc<A>> {
@@ -288,17 +293,11 @@ impl<A: Clone> System<A> {
 
 impl<A> From<HashMap<Face, Rc<A>>> for System<A> {
     fn from(value: HashMap<Face, Rc<A>>) -> Self {
-        let mut result = HashMap::new();
+        let mut result = System::empty();
         for (alpha, v) in value {
-            if !result.iter().any(|(beta, _)| alpha.leq(beta)) {
-                result = result
-                    .into_iter()
-                    .filter(|(gamma, _)| !gamma.leq(&alpha))
-                    .collect();
-                result.insert(alpha, v);
-            }
+            result = result.insert(alpha, v)
         }
-        System { binds: result }
+        result
     }
 }
 
@@ -590,10 +589,27 @@ impl Debug for Closure {
             name.fmt(f)?;
             write!(f, "- ")?;
             match e.value() {
-                EntryValueState::Lazy(term, _) => {
+                EntryValueState::Lazy(term) => {
                     write!(f, "lazy(")?;
                     term.fmt(f)?;
-                    write!(f, "lazy)")?;
+                    write!(f, ")")?;
+                }
+                EntryValueState::Cached(value) => {
+                    value.fmt(f)?;
+                }
+            }
+
+            write!(f, ", ")?;
+        }
+        write!(f, "}}, types: {{")?;
+        for (name, e) in self.type_binds.iter() {
+            name.fmt(f)?;
+            write!(f, "- ")?;
+            match e.value() {
+                EntryValueState::Lazy(term) => {
+                    write!(f, "lazy(")?;
+                    term.fmt(f)?;
+                    write!(f, ")")?;
                 }
                 EntryValueState::Cached(value) => {
                     value.fmt(f)?;
@@ -619,7 +635,7 @@ pub enum Value<M> {
     Stuck(Term<M>, Closure, M),
     Pi(Rc<Value<M>>, Rc<Value<M>>, M),
     App(Rc<Value<M>>, Rc<Value<M>>, M),
-    Var(Identifier, M),
+    Var(Identifier, Rc<Value<M>>, M),
     U,
     Sigma(Rc<Value<M>>, Rc<Value<M>>, M),
     Pair(Rc<Value<M>>, Rc<Value<M>>, M),
@@ -663,8 +679,8 @@ impl<M> Value<M> {
         Rc::new(Self::App(Rc::clone(f), Rc::clone(arg), meta))
     }
 
-    pub fn var(name: Identifier, meta: M) -> Rc<Self> {
-        Rc::new(Self::Var(name, meta))
+    pub fn var(name: Identifier, tpe: &Rc<Self>, meta: M) -> Rc<Self> {
+        Rc::new(Self::Var(name, Rc::clone(tpe), meta))
     }
 
     pub fn u() -> Rc<Self> {
@@ -773,7 +789,7 @@ impl<M> Value<M> {
         match self {
             Value::Stuck(Term::Undef(_, _), _, _) => true,
             Value::Stuck(Term::Hole, _, _) => true,
-            Value::Var(_, _) => true,
+            Value::Var(_, _, _) => true,
             Value::Comp(_, _, _, _) => true,
             Value::Fst(_, _) => true,
             Value::Snd(_, _) => true,
@@ -793,7 +809,7 @@ impl<M> PartialEq for Value<M> {
             (Value::Stuck(t1, c1, _), Value::Stuck(t2, c2, _)) => t1 == t2 && c1 == c2,
             (Value::Pi(t1, a1, _), Value::Pi(t2, a2, _)) => a1 == a2 && t1 == t2,
             (Value::App(f1, arg1, _), Value::App(f2, arg2, _)) => f1 == f2 && arg1 == arg2,
-            (Value::Var(n1, _), Value::Var(n2, _)) => n1 == n2,
+            (Value::Var(n1, t1, _), Value::Var(n2, t2, _)) => n1 == n2 && t1 == t2,
             (Value::U, Value::U) => true,
             (Value::Sigma(t1, a1, _), Value::Sigma(t2, a2, _)) => a1 == a2 && t1 == t2,
             (Value::Pair(a1, b1, _), Value::Pair(a2, b2, _)) => a1 == a2 && b1 == b2,

@@ -20,9 +20,16 @@ use super::{
 pub fn app(ctx: &TypeContext, fun: &Rc<Value>, arg: &Rc<Value>) -> Result<Rc<Value>, TypeError> {
     match (fun.as_ref(), arg.as_ref()) {
         (Value::Stuck(Term::Lam(x, _, body, _), e, _), _) => {
-            let lambda_ctx = ctx.in_closure(e);
-            let body_ctx = lambda_ctx.with_term(x, arg);
-            eval(&body_ctx, body)
+            if x == &Identifier(48) {
+                println!("start");
+            }
+            let body_ctx = ctx.in_closure(e).with_term(x, arg);
+            let res = eval(&body_ctx, body);
+            if x == &Identifier(48) {
+                println!("arg {:?}", arg);
+                println!("end {:?}", res);
+            }
+            res
         }
         (Value::Stuck(Term::Split(_, ty, branches, _), se, _), Value::Con(c, vs, _)) => {
             let branch = branches
@@ -47,8 +54,8 @@ pub fn app(ctx: &TypeContext, fun: &Rc<Value>, arg: &Rc<Value>) -> Result<Rc<Val
 
             match branch {
                 Branch::OBranch(c, xs, t) => {
-                    let mut body_ctx = ctx.in_closure(se).in_closure(de);
-                    let mut tpe_ctx = ctx.in_closure(e).in_closure(de).clone();
+                    let mut body_ctx = ctx.in_closure(se);
+                    let mut tpe_ctx = ctx.in_closure(de).clone();
 
                     let label = labels.iter().find(|l| &l.name() == c).unwrap();
                     let tele = label.telescope();
@@ -182,7 +189,7 @@ pub fn app_formula(
         v if v.is_neutral() => {
             // println!("infer_value {:?}", v);
             let tpe = infer_value(ctx, term).inspect_err(|err| {
-                println!("erroooor {:?}", term);
+                println!("erroooor {:?} {:?}", term, formula);
             })?;
             match (tpe.as_ref(), formula) {
                 (Value::PathP(_, a0, _, _), Formula::Dir(Dir::Zero)) => Ok(a0.clone()),
@@ -197,9 +204,7 @@ pub fn app_formula(
 // #[instrument(skip_all)]
 fn infer_value(ctx: &TypeContext, v: &Rc<Value>) -> Result<Rc<Value>, TypeError> {
     match v.as_ref() {
-        Value::Var(name, _) => Ok(ctx
-            .lookup_tpe(name)
-            .ok_or(ErrorCause::UnknownTermName(*name))?),
+        Value::Var(name, tpe, _) => Ok(tpe.clone()),
         Value::Stuck(Term::Undef(t, _), e, _) => eval(&ctx.in_closure(e), t),
         Value::Fst(t, _) => {
             let res = infer_value(ctx, t)?;

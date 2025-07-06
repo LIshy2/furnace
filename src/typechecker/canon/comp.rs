@@ -671,7 +671,10 @@ fn comp_glue(
                         )
                     },
                 ),
-                fibersys.face(ctx, gamma)?.into_iter(),
+                fibersys
+                    .face(ctx, gamma)?
+                    .iter()
+                    .map(|(f, t)| (f.clone(), t.clone())),
             )
             .collect();
             // TODO make union

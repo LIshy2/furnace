@@ -41,7 +41,7 @@ pub fn infer(ctx: &TypeContext, term: &Rc<Term>) -> Result<Rc<Value>, TypeError>
         Term::App(f, a, _) => {
             let fun_tpe = infer(ctx, f)?;
             let Value::Pi(tpe, lam, _) = fun_tpe.as_ref() else {
-                Err(ErrorCause::Hole)?
+                Err(ErrorCause::ExpectedPi(fun_tpe))?
             };
             check(ctx, a, tpe)?;
             app(ctx, lam, &eval(ctx, a)?)

@@ -7,7 +7,7 @@ use crate::precise::term::{Mod, Term, Value};
 use crate::typechecker::canon::app::{app, app_formula};
 use crate::typechecker::canon::comp::eq_fun;
 use crate::typechecker::canon::eval::{equiv_dom, equiv_fun, eval, eval_system, is_comp_system};
-use crate::typechecker::canon::nominal::{border, Facing};
+use crate::typechecker::canon::nominal::{border, Facing, Nominal};
 use crate::typechecker::context::{ProgressNotifier, TypeContext};
 use crate::typechecker::equiv::Equiv;
 use crate::typechecker::error::{ErrorCause, TypeError};
@@ -21,9 +21,7 @@ fn check_family(ctx: &TypeContext, f: &Rc<Term>) -> Result<(), TypeError> {
     };
     check(ctx, tpe, &Value::u())?;
     let tpe = eval(ctx, tpe)?;
-    let body_ctx = ctx
-        .with_term(name, &Value::var(*name, Mod::Precise))
-        .with_tpe(name, &tpe);
+    let body_ctx = ctx.with_term(name, &Value::var(*name, &tpe, Mod::Precise));
     check(&body_ctx, body, &Value::u())
 }
 
@@ -31,9 +29,7 @@ fn check_tele(ctx: &TypeContext, tele: &Telescope<Term>) -> Result<TypeContext, 
     let mut result = ctx.clone();
     for (name, tpe) in tele.variables.iter() {
         check(&result, tpe, &Value::u())?;
-        result = result
-            .with_term(name, &Value::var(*name, Mod::Precise))
-            .with_tpe(name, &eval(&result, tpe)?);
+        result = result.with_term(name, &Value::var(*name, &eval(&result, tpe)?, Mod::Precise));
     }
     Ok(result)
 }
@@ -51,13 +47,13 @@ fn check_branch(
         (Label::OLabel(_, tele), Branch::OBranch(c, ns, body)) => {
             let mut vars = vec![];
             let mut branch_ctx = ctx.clone();
-            let mut tpe_ctx = data_ctx.clone();
+            let mut data_ctx = data_ctx.clone();
             for ((tpe_bind, tpe), bind) in tele.variables.iter().zip(ns) {
-                let var = Value::var(*bind, Mod::Precise);
-                vars.push(var.clone());
-                let etpe = eval(&tpe_ctx, tpe)?;
-                branch_ctx = branch_ctx.with_term(bind, &var).with_tpe(bind, &etpe);
-                tpe_ctx = tpe_ctx.with_term(tpe_bind, &var).with_tpe(tpe_bind, &etpe);
+                let etpe = eval(&data_ctx, tpe)?;
+                let var = Value::var(*bind, &etpe, Mod::Precise);
+                branch_ctx = branch_ctx.with_term(bind, &var);
+                data_ctx = data_ctx.with_term(tpe_bind, &var);
+                vars.push(var);
             }
             let f_tpe = app(&branch_ctx, split_tpe, &Value::con(*c, vars, Mod::Precise))?;
             check(&branch_ctx, body, &f_tpe)
@@ -69,15 +65,9 @@ fn check_branch(
 
             for ((name, tpe), bind) in tele.variables.iter().zip(ns) {
                 let etpe = eval(&tpe_ctx, tpe)?;
-                sys_ctx = sys_ctx
-                    .with_term(bind, &Value::var(*bind, Mod::Precise))
-                    .with_tpe(bind, &etpe);
-                sys_ctx = sys_ctx
-                    .with_term(name, &Value::var(*bind, Mod::Precise))
-                    .with_tpe(name, &etpe);
-                tpe_ctx = tpe_ctx
-                    .with_term(name, &Value::var(*bind, Mod::Precise))
-                    .with_tpe(name, &etpe);
+                sys_ctx = sys_ctx.with_term(bind, &Value::var(*bind, &etpe, Mod::Precise));
+                sys_ctx = sys_ctx.with_term(name, &Value::var(*bind, &etpe, Mod::Precise));
+                tpe_ctx = tpe_ctx.with_term(name, &Value::var(*bind, &etpe, Mod::Precise));
             }
             for (i, j) in is.iter().zip(js) {
                 sys_ctx = sys_ctx.with_formula(i, Formula::Atom(*j));
@@ -90,11 +80,11 @@ fn check_branch(
             let mut vars = vec![];
             let mut tpe_ctx = data_ctx.clone();
             for ((tpe_bind, tpe), bind) in tele.variables.iter().zip(ns) {
-                let var = Value::var(*bind, Mod::Precise);
-                vars.push(var.clone());
                 let etpe = eval(&tpe_ctx, tpe)?;
-                branch_ctx = branch_ctx.with_term(bind, &var).with_tpe(bind, &etpe);
-                tpe_ctx = tpe_ctx.with_term(tpe_bind, &var).with_tpe(tpe_bind, &etpe);
+                let var = Value::var(*bind, &etpe, Mod::Precise);
+                vars.push(var.clone());
+                branch_ctx = branch_ctx.with_term(bind, &var);
+                tpe_ctx = tpe_ctx.with_term(tpe_bind, &var);
             }
             for j in js {
                 branch_ctx = branch_ctx.with_formula(j, Formula::Atom(*j));
@@ -154,16 +144,14 @@ pub fn check_declaration_set(
             for decl in decls.iter() {
                 ctx.decl_check_started(&decl.name);
                 let tpe = eval(&new_ctx, &decl.tpe)?;
-                let pre_ctx = new_ctx
-                    .with_term(
-                        &decl.name,
-                        &Value::stuck(
-                            decl.body.as_ref().clone(),
-                            ctx.closure_mutuals(&decl.body, &mutual_namespace),
-                            Mod::Precise,
-                        ),
-                    )
-                    .with_tpe(&decl.name, &tpe);
+                let pre_ctx = new_ctx.with_term(
+                    &decl.name,
+                    &Value::stuck(
+                        decl.body.as_ref().clone(),
+                        ctx.closure_mutuals(&decl.body, &mutual_namespace),
+                        Mod::Precise,
+                    ),
+                );
                 let check_span = trace_span!("check", def = ?decl.name);
                 let _enter = check_span.enter();
                 check(&pre_ctx, &decl.body, &tpe)?;
@@ -223,16 +211,13 @@ pub fn check_plam_system(
     va: &Rc<Value>,
     ps: &System<Term>,
 ) -> Result<System<Value>, TypeError> {
+    let et0 = eval(&ctx, t0)?;
     let v = ps
         .iter()
         .map(|(alpha, p_alpha)| {
             let face_ctx = ctx.with_face(alpha)?;
             let (a0, a1) = check_plam(&face_ctx, p_alpha, &va.face(ctx, alpha)?)?;
-            if Equiv::equiv(
-                &face_ctx,
-                &a0,
-                &eval(&face_ctx, t0)?.face(&face_ctx, alpha)?,
-            )? {
+            if Equiv::equiv(&ctx, &a0, &et0.face(ctx, alpha)?)? {
                 Ok((alpha.clone(), a1))
             } else {
                 Err(ErrorCause::Hole)?
@@ -253,7 +238,7 @@ fn check_equiv(ctx: &TypeContext, term: &Rc<Term>, tpe: &Rc<Value>) -> Result<()
         let s_lit = ctx.fresh();
         let z_lit = ctx.fresh();
 
-        let new_ctx = ctx.with_term(&a_lit, tpe).with_tpe(&a_lit, &Value::u());
+        let new_ctx = ctx.with_term(&a_lit, tpe);
         let t = Term::var(t_lit, Mod::Precise);
         let a = Term::var(a_lit, Mod::Precise);
         let x = Term::var(x_lit, Mod::Precise);
@@ -397,13 +382,13 @@ pub fn check(ctx: &TypeContext, term: &Rc<Term>, tpe: &Rc<Value>) -> Result<(), 
                 Err(ErrorCause::ExpectedDataType(tpe.clone()))?
             };
             let tele = label_type(c, tpe)?;
-            let mut arg_ctx = ctx.in_closure(de).clone();
+            let mut tpe_ctx = ctx.in_closure(de);
 
             for (arg, (name, tpe)) in cs.iter().zip(tele.variables) {
-                let tpe = eval(&arg_ctx, &tpe)?;
-                check(&arg_ctx, arg, &tpe)?;
+                let tpe = eval(&tpe_ctx, &tpe)?;
+                check(&ctx, arg, &tpe)?;
                 let arg_v = eval(ctx, arg)?;
-                arg_ctx = arg_ctx.with_term(&name, &arg_v);
+                tpe_ctx = tpe_ctx.with_term(&name, &arg_v);
             }
             Ok(())
         }
@@ -462,20 +447,11 @@ pub fn check(ctx: &TypeContext, term: &Rc<Term>, tpe: &Rc<Value>) -> Result<(), 
                 .collect::<HashSet<Identifier>>()
                 != ces.iter().map(|b| b.name()).collect()
             {
-                println!(
-                    "{:?} {:?}",
-                    cas.iter()
-                        .map(|l| l.name())
-                        .collect::<HashSet<Identifier>>(),
-                    ces.iter()
-                        .map(|b| b.name())
-                        .collect::<HashSet<Identifier>>()
-                );
                 Err(ErrorCause::MissingBranch)?;
             }
             for (brc, lbl) in ces.iter().zip(cas) {
                 check_branch(
-                    &ctx.in_closure(e),
+                    &ctx,
                     &ctx.in_closure(de),
                     lbl,
                     brc,
@@ -487,17 +463,19 @@ pub fn check(ctx: &TypeContext, term: &Rc<Term>, tpe: &Rc<Value>) -> Result<(), 
             Ok(())
         }
         (Value::Pi(va_, lam, _), Term::Lam(x, a, t, _)) => {
-            let Value::Stuck(Term::Lam(_, _, _, _), e, _) = lam.as_ref() else {
-                Err(ErrorCause::Hole)?
-            };
-            let va = eval(&ctx.in_closure(e), a)?;
+            let va = eval(&ctx, a)?;
             if !Equiv::equiv(ctx, &va, va_)? {
                 Err(ErrorCause::Hole)?;
             }
-            let ctx = ctx
-                .with_term(x, &Value::var(*x, Mod::Precise))
-                .with_tpe(x, &va);
-            check(&ctx, t, &app(&ctx, lam, &Value::var(*x, Mod::Precise))?)
+            let nx = ctx.fresh();
+            let ctx = ctx.with_term(&x, &Value::var(nx, &va, Mod::Precise));
+
+            let res = check(
+                &ctx,
+                t,
+                &app(&ctx, lam, &Value::var(nx, &va, Mod::Precise))?,
+            )?;
+            Ok(res)
         }
         (Value::Sigma(va, lam, _), Term::Pair(t1, t2, _)) => {
             check(ctx, t1, va)?;

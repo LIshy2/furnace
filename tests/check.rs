@@ -13,7 +13,6 @@ mod tests {
     use std::io::Read;
     use std::rc::Rc;
     use std::sync::{Arc, Mutex};
-    use std::time::SystemTime;
 
     struct ExampleModules;
     impl ModuleReader for ExampleModules {
@@ -71,8 +70,8 @@ mod tests {
 
             println!("NEW FILE {:?}", path);
 
-            if path.file_name().unwrap() == "univprop.fctt"
-                || path.file_name().unwrap() != "grothendieck.fctt"
+            if path.file_name().unwrap() != "univprop.fctt"
+                || path.file_name().unwrap() == "grothendieck.fctt"
                 || path.file_name().unwrap() == "torsor.fctt"
                 || path.file_name().unwrap() == "csystem.fctt"
             {
@@ -89,7 +88,12 @@ mod tests {
                 let (modules, names) = resolve_modules(deps).unwrap();
                 let modules = mark_erased(&modules);
 
-                // println!("man 4106 {:?}", names.demangle(&Identifier(4106)));
+                println!("man 444 {:?}", names.demangle(&Identifier(444)));
+
+                // println!("man 423 {:?}", names.demangle(&Identifier(423)));
+                // println!("man 426 {:?}", names.demangle(&Identifier(426)));
+                // println!("man 430 {:?}", names.demangle(&Identifier(430)));
+                // panic!();
                 // println!("man 4097 {:?}", names.demangle(&Identifier(4097)));
                 // println!("man 1258 {:?}", names.demangle(&Identifier(1258)));
                 // println!("man 1259 {:?}", names.demangle(&Identifier(1259)));

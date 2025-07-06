@@ -1,5 +1,3 @@
-use tracing::instrument;
-
 use crate::ctt::term::{Closure, Face, Formula, Identifier, System};
 use crate::precise::term::Value;
 use crate::typechecker::canon::app::{app, app_formula};
@@ -8,10 +6,7 @@ use crate::typechecker::canon::eval::{get_first, get_second, inv_formula, pcon};
 use crate::typechecker::canon::glue::{glue, glue_elem, unglue_elem, unglue_u};
 use crate::typechecker::context::{Entry, EntryValueState, TypeContext};
 use crate::typechecker::error::TypeError;
-use std::backtrace::Backtrace;
-use std::cell::RefCell;
 use std::collections::HashMap;
-use std::ops::Deref;
 use std::rc::Rc;
 
 pub trait Nominal: Sized {
@@ -28,7 +23,6 @@ pub fn act_closure(
     i: &Identifier,
     f: Formula,
 ) -> Result<Option<Closure>, TypeError> {
-    // println!("act {:?}", c);
     let mut updated = false;
 
     let mut term_binds = c.term_binds.clone();
@@ -42,13 +36,7 @@ pub fn act_closure(
                 }
                 EntryValueState::Cached(acted)
             }
-            EntryValueState::Lazy(term, closure) => {
-                let new_closure = act_closure(ctx, &closure, i, f.clone())?;
-                if new_closure.is_some() {
-                    entry_update = true;
-                }
-                EntryValueState::Lazy(term, new_closure.unwrap_or(closure))
-            }
+            EntryValueState::Lazy(term) => EntryValueState::Lazy(term),
         };
         if entry_update {
             updated = true;
@@ -66,13 +54,7 @@ pub fn act_closure(
                 }
                 EntryValueState::Cached(acted)
             }
-            EntryValueState::Lazy(term, closure) => {
-                let new_closure = act_closure(ctx, &closure, i, f.clone())?;
-                if new_closure.is_some() {
-                    entry_update = true;
-                }
-                EntryValueState::Lazy(term, new_closure.unwrap_or(closure))
-            }
+            EntryValueState::Lazy(term) => EntryValueState::Lazy(term),
         };
         if entry_update {
             updated = true;
@@ -114,13 +96,7 @@ fn swap_closure(c: &Closure, from: &Identifier, to: &Identifier) -> Option<Closu
                 }
                 EntryValueState::Cached(swapped)
             }
-            EntryValueState::Lazy(term, closure) => {
-                let new_closure = swap_closure(&closure, from, to);
-                if new_closure.is_some() {
-                    entry_update = true;
-                }
-                EntryValueState::Lazy(term, new_closure.unwrap_or(closure))
-            }
+            EntryValueState::Lazy(term) => EntryValueState::Lazy(term),
         };
         if entry_update {
             updated = true;
@@ -138,13 +114,7 @@ fn swap_closure(c: &Closure, from: &Identifier, to: &Identifier) -> Option<Closu
                 }
                 EntryValueState::Cached(swapped)
             }
-            EntryValueState::Lazy(term, closure) => {
-                let new_closure = swap_closure(&closure, from, to);
-                if new_closure.is_some() {
-                    entry_update = true;
-                }
-                EntryValueState::Lazy(term, new_closure.unwrap_or(closure))
-            }
+            EntryValueState::Lazy(term) => EntryValueState::Lazy(term),
         };
         if entry_update {
             updated = true;
@@ -179,10 +149,8 @@ impl Nominal for Rc<Value> {
                 fn closure_sups(c: &Closure, i: &Identifier) -> bool {
                     for (_, e) in &c.term_binds {
                         match e.value() {
-                            EntryValueState::Lazy(_, sub_closure) => {
-                                if closure_sups(&sub_closure, i) {
-                                    return true;
-                                }
+                            EntryValueState::Lazy(_) => {
+                                return false;
                             }
                             EntryValueState::Cached(v) => {
                                 if v.sups(i) {
@@ -202,7 +170,7 @@ impl Nominal for Rc<Value> {
             }
             Value::Pi(a, t, _) => a.sups(i) || t.sups(i),
             Value::App(t1, t2, _) => t1.sups(i) || t2.sups(i),
-            Value::Var(_, _) => false,
+            Value::Var(_, t, _) => t.sups(i),
             Value::U => false,
             Value::Sigma(a, t, _) => a.sups(i) || t.sups(i),
             Value::Pair(t1, t2, _) => t1.sups(i) || t2.sups(i),
@@ -533,37 +501,20 @@ impl Nominal for Rc<Value> {
                     idj(ctx, &new_a, &new_u, &new_c, &new_d, &new_x, &new_p)
                 }
             }
-            Value::U | Value::Var(_, _) => Ok(self.clone()),
+            Value::Var(n, t, m) => {
+                let new_t = t.act(ctx, i, f)?;
+                if Rc::ptr_eq(t, &new_t) {
+                    Ok(self.clone())
+                } else {
+                    Ok(Value::var(*n, &new_t, m.clone()))
+                }
+            }
+            Value::U => Ok(self.clone()),
         }?;
-        if i == &Identifier(337)
-            && cf == Formula::Atom(Identifier(133147))
-            && res.sups(&Identifier(133159))
-            && !self.sups(&Identifier(133159))
-        {
-            println!("i {:?}", i);
-            println!("f {:?}", cf);
-            println!("term sup {:?}", self.sups(&Identifier(133159)));
-            println!("term {:?}", &format!("{:?}", self)[0..500]);
-            let st = format!("{:?}", res);
-            println!("len {}", st.len());
-            println!("res {:?}", &format!("{:?}", res)[0..10000]);
-            panic!();
-        }
         Ok(res)
     }
 
     fn swap(&self, from: &Identifier, to: &Identifier) -> Self {
-        // if from == &Identifier(100158)
-        //     || to == &Identifier(100158)
-        //     || from == &Identifier(100169)
-        //     || to == &Identifier(100169)
-        // {
-        //     println!("from {:?}", from);
-        //     println!("to {:?}", to);
-        //     println!("self {:?}", self);
-        //     println!("{}", Backtrace::capture());
-        // }
-
         fn swap_formula(o: &Formula, from: &Identifier, to: &Identifier) -> Option<Formula> {
             if o.sups(from) || o.sups(to) {
                 Some(o.swap(from, to))
@@ -586,7 +537,14 @@ impl Nominal for Rc<Value> {
 
         match self.as_ref() {
             Value::U => self.clone(),
-            Value::Var(_, _) => self.clone(),
+            Value::Var(n, t, m) => {
+                let new_t = t.swap(from, to);
+                if Rc::ptr_eq(t, &new_t) {
+                    self.clone()
+                } else {
+                    Value::var(*n, &new_t, m.clone())
+                }
+            }
             Value::Pi(t, u, m) => {
                 let new_t = t.swap(from, to);
                 let new_u = u.swap(from, to);

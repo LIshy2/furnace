@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 use std::hash::Hash;
 
+use rpds::HashTrieMap;
+
 pub fn intersect<'l, 'r, A, B, C>(
     left: &'l HashMap<A, B>,
     right: &'r HashMap<A, C>,
