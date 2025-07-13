@@ -1,8 +1,9 @@
 use super::context::ResolveContext;
 use super::declaration::resolve_declarations;
 use super::telescope::Telescope;
-use crate::ctt::term::{
-    anon_id, Branch, DeclarationSet, Dir, Face, Formula, Identifier, Label, System, Term,
+use crate::ctt::{
+    formula::Dir, formula::Formula, system::Face, system::System, term::anon_id, term::Branch,
+    term::DeclarationSet, term::Label, term::Term, Identifier,
 };
 use crate::parser::ast;
 use crate::resolver::error::ResolveError;
@@ -360,7 +361,7 @@ pub fn resolve_branch(
 fn resolve_system(
     ctx: ResolveContext,
     system: ast::System,
-) -> Result<System<Term<()>>, ResolveError> {
+) -> Result<System<Rc<Term<()>>>, ResolveError> {
     let ast::System(sides) = system;
     sides
         .into_iter()

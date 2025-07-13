@@ -1,5 +1,5 @@
 use crate::ctt::term;
-use crate::ctt::term::Identifier;
+use crate::ctt::Identifier;
 use crate::parser::ast;
 use crate::parser::ast::AIdent;
 use crate::resolver::context::ResolveContext;
@@ -88,12 +88,7 @@ impl Telescope {
     ) -> Result<Rc<term::Term<()>>, ResolveError> {
         self.through(body, &|name, tpe, body| {
             let tpe = Rc::new(tpe.clone());
-            Ok(Rc::new(term::Term::Lam(
-                *name,
-                tpe.clone(),
-                body,
-                (),
-            )))
+            Ok(Rc::new(term::Term::Lam(*name, tpe.clone(), body, ())))
         })
     }
 

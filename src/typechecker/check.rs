@@ -1,8 +1,9 @@
 use tracing::{span, trace_span, Level};
 
-use crate::ctt::term::{
-    anon_id, Branch, DeclarationSet, Dir, Formula, Identifier, Label, System, Telescope,
-};
+use crate::ctt::formula::{Dir, Formula};
+use crate::ctt::system::System;
+use crate::ctt::term::{anon_id, Branch, DeclarationSet, Label, Telescope};
+use crate::ctt::Identifier;
 use crate::precise::term::{Mod, Term, Value};
 use crate::typechecker::canon::app::{app, app_formula};
 use crate::typechecker::canon::comp::eq_fun;
@@ -89,8 +90,6 @@ fn check_branch(
             for j in js {
                 branch_ctx = branch_ctx.with_formula(j, Formula::Atom(*j));
             }
-            // println!("split_tpe {:?}", split_tpe);
-            // println!("con {:?}", c);
             let b_tpe = app(
                 &branch_ctx,
                 split_tpe,
@@ -197,7 +196,7 @@ pub fn check_plam(
     }
 }
 
-fn check_comp_system(ctx: &TypeContext, sys: &System<Value>) -> Result<(), TypeError> {
+fn check_comp_system(ctx: &TypeContext, sys: &System<Rc<Value>>) -> Result<(), TypeError> {
     if is_comp_system(ctx, sys)? {
         Ok(())
     } else {
@@ -209,8 +208,8 @@ pub fn check_plam_system(
     ctx: &TypeContext,
     t0: &Rc<Term>,
     va: &Rc<Value>,
-    ps: &System<Term>,
-) -> Result<System<Value>, TypeError> {
+    ps: &System<Rc<Term>>,
+) -> Result<System<Rc<Value>>, TypeError> {
     let et0 = eval(&ctx, t0)?;
     let v = ps
         .iter()
@@ -310,7 +309,7 @@ fn check_equiv(ctx: &TypeContext, term: &Rc<Term>, tpe: &Rc<Value>) -> Result<()
     check(ctx, term, &eq_tpe)
 }
 
-fn check_glue(ctx: &TypeContext, tpe: &Rc<Value>, system: &System<Term>) -> Result<(), TypeError> {
+fn check_glue(ctx: &TypeContext, tpe: &Rc<Value>, system: &System<Rc<Term>>) -> Result<(), TypeError> {
     for (alpha, t_alpha) in system.iter() {
         check_equiv(ctx, t_alpha, &tpe.face(ctx, alpha)?)?;
     }
@@ -320,8 +319,8 @@ fn check_glue(ctx: &TypeContext, tpe: &Rc<Value>, system: &System<Term>) -> Resu
 fn check_glue_elem(
     ctx: &TypeContext,
     term: &Rc<Value>,
-    system1: &System<Value>,
-    system2: &System<Term>,
+    system1: &System<Rc<Value>>,
+    system2: &System<Rc<Term>>,
 ) -> Result<(), TypeError> {
     if system1.domain() != system2.domain() {
         Err(ErrorCause::Hole)?
@@ -350,8 +349,8 @@ fn check_glue_elem(
 fn check_glue_elem_u(
     ctx: &TypeContext,
     term: &Rc<Value>,
-    system1: &System<Value>,
-    system2: &System<Term>,
+    system1: &System<Rc<Value>>,
+    system2: &System<Rc<Term>>,
 ) -> Result<(), TypeError> {
     if system1.domain() != system2.domain() {
         Err(ErrorCause::Hole)?

@@ -1,4 +1,7 @@
-use crate::ctt::term::{Branch, Closure, DeclarationSet, Face, Formula, Identifier, Label, System};
+use crate::ctt::formula::Formula;
+use crate::ctt::system::{Face, System};
+use crate::ctt::term::{Branch, Closure, DeclarationSet, Label};
+use crate::ctt::Identifier;
 use crate::precise::term::{Mod, Term, Value};
 use crate::typechecker::canon::eval::eval;
 use crate::typechecker::canon::heat::PathIndex;
@@ -11,7 +14,7 @@ use std::rc::Rc;
 use tracing::trace_span;
 
 use super::canon::eval::eval_system;
-use super::canon::nominal::{Facing};
+use super::canon::nominal::Facing;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum EntryValueState {
@@ -218,7 +221,7 @@ impl TypeContext {
         }
     }
 
-    pub fn fresh(&self) -> Identifier {
+    pub fn fresh(&self, ) -> Identifier {
         let res = *self.counter.borrow_mut();
         *self.counter.borrow_mut() += 1;
         Identifier(res)
@@ -708,7 +711,7 @@ fn free_vars_helper(
 }
 
 fn free_vars_system(
-    sys: &System<Term>,
+    sys: &System<Rc<Term>>,
     free_vars: &mut HashSet<Identifier>,
     free_is: &mut HashSet<Identifier>,
     bound_vars: &HashSet<Identifier>,

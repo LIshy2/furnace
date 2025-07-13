@@ -1,21 +1,23 @@
-use std::cmp::Ordering;
+use std::cell::LazyCell;
+use std::cell::OnceCell;
+use std::cell::RefCell;
 use std::collections::hash_map::IntoIter;
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::fmt::Formatter;
 use std::hash::{Hash, Hasher};
-use std::ops::Index;
+use std::ops::Deref;
+use std::ops::DerefMut;
 use std::rc::Rc;
 
 use rpds::HashTrieMap;
 use rpds::HashTrieSet;
 
+use crate::ctt::formula::Formula;
+use crate::ctt::system::System;
+use crate::ctt::Identifier;
 use crate::typechecker::context::Entry;
 use crate::typechecker::context::EntryValueState;
-use crate::utils::intersect;
-
-#[derive(Copy, Clone, Hash, Eq, PartialEq, Ord, PartialOrd, Debug)]
-pub struct Identifier(pub usize);
 
 pub fn anon_id() -> Identifier {
     Identifier(9999999999999)
@@ -44,7 +46,7 @@ pub enum DeclarationSet<T> {
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Label<T> {
     OLabel(Identifier, Telescope<T>),
-    PLabel(Identifier, Telescope<T>, Vec<Identifier>, System<T>),
+    PLabel(Identifier, Telescope<T>, Vec<Identifier>, System<Rc<T>>),
 }
 
 impl<T: Clone> Label<T> {
@@ -78,255 +80,6 @@ impl<T> Branch<T> {
     }
 }
 
-#[derive(Clone, Eq, PartialEq, Hash, Debug)]
-pub enum Dir {
-    Zero,
-    One,
-}
-
-impl Dir {
-    pub fn negate(&self) -> Dir {
-        match self {
-            Dir::Zero => Dir::One,
-            Dir::One => Dir::Zero,
-        }
-    }
-}
-
-#[derive(Clone, PartialEq, Eq, Debug)]
-pub enum Formula {
-    Dir(Dir),
-    Atom(Identifier),
-    NegAtom(Identifier),
-    And(Box<Formula>, Box<Formula>),
-    Or(Box<Formula>, Box<Formula>),
-}
-
-impl Formula {
-    pub fn and(&self, other: &Formula) -> Formula {
-        match (self, other) {
-            (Formula::Dir(Dir::Zero), _) => Formula::Dir(Dir::Zero),
-            (_, Formula::Dir(Dir::Zero)) => Formula::Dir(Dir::Zero),
-            (Formula::Dir(Dir::One), rhs) => rhs.clone(),
-            (lhs, Formula::Dir(Dir::One)) => lhs.clone(),
-            (lhs, rhs) => Formula::And(Box::new(lhs.clone()), Box::new(rhs.clone())),
-        }
-    }
-
-    pub fn or(&self, other: &Formula) -> Formula {
-        match (self, other) {
-            (Formula::Dir(Dir::One), _) => Formula::Dir(Dir::One),
-            (_, Formula::Dir(Dir::One)) => Formula::Dir(Dir::One),
-            (Formula::Dir(Dir::Zero), rhs) => rhs.clone(),
-            (lhs, Formula::Dir(Dir::Zero)) => lhs.clone(),
-            (lhs, rhs) => Formula::Or(Box::new(lhs.clone()), Box::new(rhs.clone())),
-        }
-    }
-
-    pub fn negate(&self) -> Formula {
-        match self {
-            Formula::Dir(d) => Formula::Dir(d.negate()),
-            Formula::Atom(name) => Formula::NegAtom(*name),
-            Formula::NegAtom(name) => Formula::Atom(*name),
-            Formula::And(lhs, rhs) => Formula::Or(Box::new(lhs.negate()), Box::new(rhs.negate())),
-            Formula::Or(lhs, rhs) => Formula::And(Box::new(lhs.negate()), Box::new(rhs.negate())),
-        }
-    }
-}
-
-#[derive(Clone, Eq, PartialEq, Debug)]
-pub struct Face {
-    pub binds: HashMap<Identifier, Dir>,
-}
-
-impl Face {
-    pub fn cond(name: &Identifier, dir: Dir) -> Face {
-        Face {
-            binds: HashMap::from([(*name, dir)]),
-        }
-    }
-
-    pub fn eps() -> Face {
-        Face {
-            binds: HashMap::new(),
-        }
-    }
-
-    pub fn domain(&self) -> Vec<Identifier> {
-        self.binds.keys().copied().collect()
-    }
-
-    pub fn compatible(&self, other: &Face) -> bool {
-        for (int, dir) in self.binds.iter() {
-            if let Some(other_v) = other.binds.get(int) {
-                if dir != other_v {
-                    return false;
-                }
-            }
-        }
-        true
-    }
-
-    pub fn removed(&self, i: &Identifier) -> Face {
-        let mut result = self.clone();
-        result.binds.remove(i);
-        result
-    }
-
-    pub fn meet(&self, other: &Face) -> Face {
-        let mut result = Face::eps();
-        for (i, d1) in &self.binds {
-            if let Some(d2) = other.binds.get(i) {
-                if d2 != d1 {
-                    panic!("faces incompatible")
-                }
-            }
-            result.binds.insert(*i, d1.clone());
-        }
-        for (i, d2) in &other.binds {
-            if !self.binds.contains_key(i) {
-                result.binds.insert(*i, d2.clone());
-            }
-        }
-
-        result
-    }
-
-    pub fn minus(&self, other: &Face) -> Face {
-        let mut result = self.clone();
-        for k in other.binds.keys() {
-            result.binds.remove(k);
-        }
-        result
-    }
-
-    pub fn leq(&self, other: &Face) -> bool {
-        for (b, d1) in &other.binds {
-            if let Some(d2) = self.binds.get(b) {
-                if d1 != d2 {
-                    return false;
-                }
-            } else {
-                return false;
-            }
-        }
-        return true;
-    }
-}
-
-impl Hash for Face {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        let mut entries = self.binds.iter().collect::<Vec<_>>();
-        entries.sort_by(|a, b| a.0.cmp(b.0));
-
-        for (k, v) in entries {
-            k.hash(state);
-            v.hash(state);
-        }
-    }
-}
-
-#[derive(PartialEq, Eq, Debug)]
-pub struct System<A> {
-    binds: HashMap<Face, Rc<A>>,
-}
-
-impl<A> Clone for System<A> {
-    fn clone(&self) -> Self {
-        Self {
-            binds: self.binds.clone(),
-        }
-    }
-}
-
-impl<A> System<A> {
-    pub fn empty() -> System<A> {
-        System {
-            binds: HashMap::new(),
-        }
-    }
-
-    pub fn domain(&self) -> Vec<Identifier> {
-        self.binds.iter().flat_map(|(f, _)| f.domain()).collect()
-    }
-
-    pub fn insert(&self, alpha: Face, bind: Rc<A>) -> System<A> {
-        let mut result = self.clone();
-        if !result.binds.iter().any(|(beta, _)| alpha.leq(beta)) {
-            result.binds = result
-                .binds
-                .into_iter()
-                .filter(|(gamma, _)| !gamma.leq(&alpha))
-                .map(|(f, a)| (f.clone(), a.clone()))
-                .collect();
-            result.binds.insert(alpha, bind);
-        }
-        result
-    }
-
-    pub fn get(&self, face: &Face) -> Option<&Rc<A>> {
-        self.binds.get(face)
-    }
-
-    pub fn contains(&self, face: &Face) -> bool {
-        self.binds.contains_key(face)
-    }
-
-    pub fn iter(&self) -> impl Iterator<Item = (&Face, &Rc<A>)> {
-        self.binds.iter()
-    }
-
-    pub fn values(&self) -> impl Iterator<Item = &Rc<A>> {
-        self.binds.values()
-    }
-
-    pub fn len(&self) -> usize {
-        self.binds.len()
-    }
-
-    pub fn intersect<'a, B>(&'a self, other: &'a System<B>) -> SystemIntersect<'a, A, B> {
-        SystemIntersect {
-            iter: intersect(&self.binds, &other.binds).into_iter(),
-        }
-    }
-}
-
-impl<A> From<HashMap<Face, Rc<A>>> for System<A> {
-    fn from(value: HashMap<Face, Rc<A>>) -> Self {
-        let mut result = System::empty();
-        for (alpha, v) in value {
-            result = result.insert(alpha, v)
-        }
-        result
-    }
-}
-
-impl<A> Index<&Face> for System<A> {
-    type Output = Rc<A>;
-
-    fn index(&self, index: &Face) -> &Self::Output {
-        &self.binds[index]
-    }
-}
-
-impl<A> FromIterator<(Face, Rc<A>)> for System<A> {
-    fn from_iter<T: IntoIterator<Item = (Face, Rc<A>)>>(iter: T) -> Self {
-        System::from(HashMap::from_iter(iter))
-    }
-}
-
-pub struct SystemIntersect<'a, A, B> {
-    iter: IntoIter<&'a Face, (&'a Rc<A>, &'a Rc<B>)>,
-}
-
-impl<'a, A, B> Iterator for SystemIntersect<'a, A, B> {
-    type Item = (&'a Face, (&'a Rc<A>, &'a Rc<B>));
-
-    fn next(&mut self) -> Option<Self::Item> {
-        self.iter.next()
-    }
-}
-
 #[derive(Clone, Debug)]
 pub enum Term<M> {
     Pi(Rc<Term<M>>, M),
@@ -349,14 +102,14 @@ pub enum Term<M> {
     PathP(Rc<Term<M>>, Rc<Term<M>>, Rc<Term<M>>, M),
     PLam(Identifier, Rc<Term<M>>, M),
     AppFormula(Rc<Term<M>>, Formula, M),
-    Comp(Rc<Term<M>>, Rc<Term<M>>, System<Term<M>>, M),
-    Fill(Rc<Term<M>>, Rc<Term<M>>, System<Term<M>>, M),
-    HComp(Rc<Term<M>>, Rc<Term<M>>, System<Term<M>>, M),
-    Glue(Rc<Term<M>>, System<Term<M>>, M),
-    GlueElem(Rc<Term<M>>, System<Term<M>>, M),
-    UnGlueElem(Rc<Term<M>>, System<Term<M>>, M),
+    Comp(Rc<Term<M>>, Rc<Term<M>>, System<Rc<Term<M>>>, M),
+    Fill(Rc<Term<M>>, Rc<Term<M>>, System<Rc<Term<M>>>, M),
+    HComp(Rc<Term<M>>, Rc<Term<M>>, System<Rc<Term<M>>>, M),
+    Glue(Rc<Term<M>>, System<Rc<Term<M>>>, M),
+    GlueElem(Rc<Term<M>>, System<Rc<Term<M>>>, M),
+    UnGlueElem(Rc<Term<M>>, System<Rc<Term<M>>>, M),
     Id(Rc<Term<M>>, Rc<Term<M>>, Rc<Term<M>>, M),
-    IdPair(Rc<Term<M>>, System<Term<M>>, M),
+    IdPair(Rc<Term<M>>, System<Rc<Term<M>>>, M),
     IdJ(
         Rc<Term<M>>,
         Rc<Term<M>>,
@@ -460,27 +213,27 @@ impl<M> Term<M> {
         Rc::new(Term::AppFormula(fun.clone(), formula, meta))
     }
 
-    pub fn comp(a: &Rc<Term<M>>, t: &Rc<Term<M>>, sys: System<Term<M>>, meta: M) -> Rc<Term<M>> {
+    pub fn comp(a: &Rc<Term<M>>, t: &Rc<Term<M>>, sys: System<Rc<Term<M>>>, meta: M) -> Rc<Term<M>> {
         Rc::new(Term::Comp(a.clone(), t.clone(), sys, meta))
     }
 
-    pub fn fill(a: &Rc<Term<M>>, t: &Rc<Term<M>>, sys: System<Term<M>>, meta: M) -> Rc<Term<M>> {
+    pub fn fill(a: &Rc<Term<M>>, t: &Rc<Term<M>>, sys: System<Rc<Term<M>>>, meta: M) -> Rc<Term<M>> {
         Rc::new(Term::Fill(a.clone(), t.clone(), sys, meta))
     }
 
-    pub fn hcomp(a: &Rc<Term<M>>, t: &Rc<Term<M>>, sys: System<Term<M>>, meta: M) -> Rc<Term<M>> {
+    pub fn hcomp(a: &Rc<Term<M>>, t: &Rc<Term<M>>, sys: System<Rc<Term<M>>>, meta: M) -> Rc<Term<M>> {
         Rc::new(Term::HComp(a.clone(), t.clone(), sys, meta))
     }
 
-    pub fn glue(a: &Rc<Term<M>>, sys: System<Term<M>>, meta: M) -> Rc<Term<M>> {
+    pub fn glue(a: &Rc<Term<M>>, sys: System<Rc<Term<M>>>, meta: M) -> Rc<Term<M>> {
         Rc::new(Term::Glue(a.clone(), sys, meta))
     }
 
-    pub fn glue_elem(a: &Rc<Term<M>>, sys: System<Term<M>>, meta: M) -> Rc<Term<M>> {
+    pub fn glue_elem(a: &Rc<Term<M>>, sys: System<Rc<Term<M>>>, meta: M) -> Rc<Term<M>> {
         Rc::new(Term::GlueElem(a.clone(), sys, meta))
     }
 
-    pub fn unglue_elem(a: &Rc<Term<M>>, sys: System<Term<M>>, meta: M) -> Rc<Term<M>> {
+    pub fn unglue_elem(a: &Rc<Term<M>>, sys: System<Rc<Term<M>>>, meta: M) -> Rc<Term<M>> {
         Rc::new(Term::UnGlueElem(a.clone(), sys, meta))
     }
 
@@ -488,7 +241,7 @@ impl<M> Term<M> {
         Rc::new(Term::Id(a.clone(), x.clone(), y.clone(), meta))
     }
 
-    pub fn id_pair(a: &Rc<Term<M>>, sys: System<Term<M>>, meta: M) -> Rc<Term<M>> {
+    pub fn id_pair(a: &Rc<Term<M>>, sys: System<Rc<Term<M>>>, meta: M) -> Rc<Term<M>> {
         Rc::new(Term::IdPair(a.clone(), sys, meta))
     }
 
@@ -646,15 +399,15 @@ pub enum Value<M> {
     PathP(Rc<Value<M>>, Rc<Value<M>>, Rc<Value<M>>, M),
     PLam(Identifier, Rc<Value<M>>, M),
     AppFormula(Rc<Value<M>>, Formula, M),
-    Comp(Rc<Value<M>>, Rc<Value<M>>, System<Value<M>>, M),
-    CompU(Rc<Value<M>>, System<Value<M>>, M),
-    HComp(Rc<Value<M>>, Rc<Value<M>>, System<Value<M>>, M),
-    Glue(Rc<Value<M>>, System<Value<M>>, M),
-    GlueElem(Rc<Value<M>>, System<Value<M>>, M),
-    UnGlueElem(Rc<Value<M>>, System<Value<M>>, M),
-    UnGlueElemU(Rc<Value<M>>, Rc<Value<M>>, System<Value<M>>, M),
+    Comp(Rc<Value<M>>, Rc<Value<M>>, System<Rc<Value<M>>>, M),
+    CompU(Rc<Value<M>>, System<Rc<Value<M>>>, M),
+    HComp(Rc<Value<M>>, Rc<Value<M>>, System<Rc<Value<M>>>, M),
+    Glue(Rc<Value<M>>, System<Rc<Value<M>>>, M),
+    GlueElem(Rc<Value<M>>, System<Rc<Value<M>>>, M),
+    UnGlueElem(Rc<Value<M>>, System<Rc<Value<M>>>, M),
+    UnGlueElemU(Rc<Value<M>>, Rc<Value<M>>, System<Rc<Value<M>>>, M),
     Id(Rc<Value<M>>, Rc<Value<M>>, Rc<Value<M>>, M),
-    IdPair(Rc<Value<M>>, System<Value<M>>, M),
+    IdPair(Rc<Value<M>>, System<Rc<Value<M>>>, M),
     IdJ(
         Rc<Value<M>>,
         Rc<Value<M>>,
@@ -729,31 +482,36 @@ impl<M> Value<M> {
         Rc::new(Self::AppFormula(Rc::clone(f), formula, meta))
     }
 
-    pub fn comp(a: &Rc<Self>, b: &Rc<Self>, system: System<Self>, meta: M) -> Rc<Self> {
+    pub fn comp(a: &Rc<Self>, b: &Rc<Self>, system: System<Rc<Self>>, meta: M) -> Rc<Self> {
         Rc::new(Self::Comp(Rc::clone(a), Rc::clone(b), system, meta))
     }
 
-    pub fn comp_u(a: &Rc<Self>, system: System<Self>, meta: M) -> Rc<Self> {
+    pub fn comp_u(a: &Rc<Self>, system: System<Rc<Self>>, meta: M) -> Rc<Self> {
         Rc::new(Self::CompU(Rc::clone(a), system, meta))
     }
 
-    pub fn hcomp(a: &Rc<Self>, b: &Rc<Self>, system: System<Self>, meta: M) -> Rc<Self> {
+    pub fn hcomp(a: &Rc<Self>, b: &Rc<Self>, system: System<Rc<Self>>, meta: M) -> Rc<Self> {
         Rc::new(Self::HComp(Rc::clone(a), Rc::clone(b), system, meta))
     }
 
-    pub fn glue(a: &Rc<Self>, system: System<Self>, meta: M) -> Rc<Self> {
+    pub fn glue(a: &Rc<Self>, system: System<Rc<Self>>, meta: M) -> Rc<Self> {
         Rc::new(Self::Glue(Rc::clone(a), system, meta))
     }
 
-    pub fn glue_elem(a: &Rc<Self>, system: System<Self>, meta: M) -> Rc<Self> {
+    pub fn glue_elem(a: &Rc<Self>, system: System<Rc<Self>>, meta: M) -> Rc<Self> {
         Rc::new(Self::GlueElem(Rc::clone(a), system, meta))
     }
 
-    pub fn unglue_elem(a: &Rc<Self>, system: System<Self>, meta: M) -> Rc<Self> {
+    pub fn unglue_elem(a: &Rc<Self>, system: System<Rc<Self>>, meta: M) -> Rc<Self> {
         Rc::new(Self::UnGlueElem(Rc::clone(a), system, meta))
     }
 
-    pub fn unglue_elem_u(a: &Rc<Self>, b: &Rc<Self>, system: System<Self>, meta: M) -> Rc<Self> {
+    pub fn unglue_elem_u(
+        a: &Rc<Self>,
+        b: &Rc<Self>,
+        system: System<Rc<Self>>,
+        meta: M,
+    ) -> Rc<Self> {
         Rc::new(Self::UnGlueElemU(Rc::clone(a), Rc::clone(b), system, meta))
     }
 
@@ -761,7 +519,7 @@ impl<M> Value<M> {
         Rc::new(Self::Id(Rc::clone(a), Rc::clone(x), Rc::clone(y), meta))
     }
 
-    pub fn id_pair(a: &Rc<Self>, system: System<Self>, meta: M) -> Rc<Self> {
+    pub fn id_pair(a: &Rc<Self>, system: System<Rc<Self>>, meta: M) -> Rc<Self> {
         Rc::new(Self::IdPair(Rc::clone(a), system, meta))
     }
 
@@ -803,7 +561,7 @@ impl<M> Value<M> {
     }
 }
 
-impl<M> PartialEq for Value<M> {
+impl<M: Eq> PartialEq for Value<M> {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (Value::Stuck(t1, c1, _), Value::Stuck(t2, c2, _)) => t1 == t2 && c1 == c2,
@@ -855,4 +613,4 @@ impl<M> PartialEq for Value<M> {
     }
 }
 
-impl<M> Eq for Value<M> {}
+impl<M: Eq> Eq for Value<M> {}

@@ -1,6 +1,4 @@
-use tracing::instrument;
-
-use crate::ctt::term::{anon_id, Face, Identifier, System, Telescope};
+use crate::ctt::{system::Face, system::System, term::anon_id, term::Telescope, Identifier};
 use crate::precise::term::{Mod, Term, Value};
 use crate::typechecker::check::{
     check, check_declaration_set, check_formula, check_plam, check_plam_system,

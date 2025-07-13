@@ -1,6 +1,4 @@
-use tracing::instrument;
-
-use crate::ctt::term::{Face, System};
+use crate::ctt::system::{Face, System};
 use crate::precise::term::{Mod, Value};
 use crate::typechecker::context::TypeContext;
 use crate::typechecker::error::{ErrorCause, TypeError};
@@ -10,8 +8,7 @@ use super::app::app;
 use super::comp::eq_fun;
 use super::eval::{equiv_dom, equiv_fun};
 
-// #[instrument(skip_all)]
-pub fn glue(v: &Rc<Value>, system: System<Value>, m: Mod) -> Rc<Value> {
+pub fn glue(v: &Rc<Value>, system: System<Rc<Value>>, m: Mod) -> Rc<Value> {
     if let Some(result) = system.get(&Face::eps()) {
         equiv_dom(result)
     } else {
@@ -19,8 +16,7 @@ pub fn glue(v: &Rc<Value>, system: System<Value>, m: Mod) -> Rc<Value> {
     }
 }
 
-// #[instrument(skip_all)]
-pub fn glue_elem(v: &Rc<Value>, system: System<Value>, m: Mod) -> Rc<Value> {
+pub fn glue_elem(v: &Rc<Value>, system: System<Rc<Value>>, m: Mod) -> Rc<Value> {
     if let Some(result) = system.get(&Face::eps()) {
         result.clone()
     } else {
@@ -28,12 +24,11 @@ pub fn glue_elem(v: &Rc<Value>, system: System<Value>, m: Mod) -> Rc<Value> {
     }
 }
 
-// #[instrument(skip_all)]
 pub fn unglue_u(
     ctx: &TypeContext,
     w: &Rc<Value>,
     b: &Rc<Value>,
-    es: System<Value>,
+    es: System<Rc<Value>>,
     m: Mod,
 ) -> Result<Rc<Value>, TypeError> {
     if let Some(result) = es.get(&Face::eps()) {
@@ -46,11 +41,10 @@ pub fn unglue_u(
     }
 }
 
-// #[instrument(skip_all)]
 pub fn unglue(
     ctx: &TypeContext,
     v: &Rc<Value>,
-    system: System<Value>,
+    system: System<Rc<Value>>,
 ) -> Result<Rc<Value>, TypeError> {
     if let Some(result) = system.get(&Face::eps()) {
         app(ctx, &equiv_fun(result), v)
@@ -62,11 +56,10 @@ pub fn unglue(
     }
 }
 
-// #[instrument(skip_all)]
 pub fn unglue_elem(
     ctx: &TypeContext,
     v: &Rc<Value>,
-    system: System<Value>,
+    system: System<Rc<Value>>,
     m: Mod,
 ) -> Result<Rc<Value>, TypeError> {
     if let Some(result) = system.get(&Face::eps()) {

@@ -1,5 +1,6 @@
+use chrono::DateTime;
 use clap::Parser;
-use furnace::ctt::term::Identifier;
+use furnace::ctt::Identifier;
 use furnace::flame::FlameLogger;
 use furnace::parser;
 use furnace::parser::ast::Module;
@@ -15,6 +16,7 @@ use std::io::{LineWriter, Read};
 use std::path::Path;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
+use std::time::SystemTime;
 use tracing::{info, Level};
 use tracing_appender::{non_blocking, rolling};
 use tracing_subscriber::fmt::format::FmtSpan;

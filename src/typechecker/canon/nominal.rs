@@ -1,4 +1,7 @@
-use crate::ctt::term::{Closure, Face, Formula, Identifier, System};
+use crate::ctt::formula::Formula;
+use crate::ctt::system::{Face, System};
+use crate::ctt::term::Closure;
+use crate::ctt::Identifier;
 use crate::precise::term::Value;
 use crate::typechecker::canon::app::{app, app_formula};
 use crate::typechecker::canon::comp::{comp_line, comp_univ, hcomp, idj};
@@ -10,7 +13,9 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 pub trait Nominal: Sized {
-    fn sups(&self, i: &Identifier) -> bool;
+    fn sups_for_act(&self, i: &Identifier) -> bool;
+
+    fn sups_for_swap(&self, i: &Identifier) -> bool;
 
     fn act(&self, ctx: &TypeContext, i: &Identifier, f: Formula) -> Result<Self, TypeError>;
 
@@ -143,71 +148,176 @@ fn swap_closure(c: &Closure, from: &Identifier, to: &Identifier) -> Option<Closu
 }
 
 impl Nominal for Rc<Value> {
-    fn sups(&self, i: &Identifier) -> bool {
+    fn sups_for_act(&self, i: &Identifier) -> bool {
         match self.as_ref() {
             Value::Stuck(_, c, _) => {
                 fn closure_sups(c: &Closure, i: &Identifier) -> bool {
                     for (_, e) in &c.term_binds {
                         match e.value() {
-                            EntryValueState::Lazy(_) => {
-                                return false;
-                            }
                             EntryValueState::Cached(v) => {
-                                if v.sups(i) {
+                                if v.sups_for_act(i) {
                                     return true;
                                 }
                             }
+                            _ => (),
+                        }
+                    }
+                    for (_, e) in &c.type_binds {
+                        match e.value() {
+                            EntryValueState::Cached(v) => {
+                                if v.sups_for_act(i) {
+                                    return true;
+                                }
+                            }
+                            _ => (),
                         }
                     }
                     for (_, f) in &c.formula_binds {
-                        if f.sups(i) {
+                        if f.sups_for_act(i) {
                             return true;
                         }
                     }
-                    return false;
+                    false
                 }
                 closure_sups(c, i)
             }
-            Value::Pi(a, t, _) => a.sups(i) || t.sups(i),
-            Value::App(t1, t2, _) => t1.sups(i) || t2.sups(i),
-            Value::Var(_, t, _) => t.sups(i),
+            Value::Pi(a, t, _) => a.sups_for_act(i) || t.sups_for_act(i),
+            Value::App(t1, t2, _) => t1.sups_for_act(i) || t2.sups_for_act(i),
+            Value::Var(_, t, _) => t.sups_for_act(i),
             Value::U => false,
-            Value::Sigma(a, t, _) => a.sups(i) || t.sups(i),
-            Value::Pair(t1, t2, _) => t1.sups(i) || t2.sups(i),
-            Value::Fst(t, _) => t.sups(i),
-            Value::Snd(t, _) => t.sups(i),
-            Value::Con(_, ts, _) => ts.iter().any(|v| v.sups(i)),
+            Value::Sigma(a, t, _) => a.sups_for_act(i) || t.sups_for_act(i),
+            Value::Pair(t1, t2, _) => t1.sups_for_act(i) || t2.sups_for_act(i),
+            Value::Fst(t, _) => t.sups_for_act(i),
+            Value::Snd(t, _) => t.sups_for_act(i),
+            Value::Con(_, ts, _) => ts.iter().any(|v| v.sups_for_act(i)),
             Value::PCon(_, t, ts, is, _) => {
-                t.sups(i) || ts.iter().any(|v| v.sups(i)) || is.iter().any(|f| f.sups(i))
+                t.sups_for_act(i)
+                    || ts.iter().any(|v| v.sups_for_act(i))
+                    || is.iter().any(|f| f.sups_for_act(i))
             }
-            Value::PathP(t1, t2, t3, _) => t1.sups(i) || t2.sups(i) || t3.sups(i),
-            Value::PLam(n, t, _) => n != i && t.sups(i),
-            Value::AppFormula(t, f, _) => t.sups(i) || f.sups(i),
-            Value::Comp(t1, t2, system, _) => t1.sups(i) || t2.sups(i) || system.sups(i),
-            Value::CompU(t, system, _) => t.sups(i) || system.sups(i),
-            Value::HComp(t1, t2, system, _) => t1.sups(i) || t2.sups(i) || system.sups(i),
-            Value::Glue(t, system, _) => t.sups(i) || system.sups(i),
-            Value::GlueElem(t, system, _) => t.sups(i) || system.sups(i),
-            Value::UnGlueElem(t, system, _) => t.sups(i) || system.sups(i),
-            Value::UnGlueElemU(t, b, system, _) => t.sups(i) || b.sups(i) || system.sups(i),
-            Value::Id(t1, t2, t3, _) => t1.sups(i) || t2.sups(i) || t3.sups(i),
-            Value::IdPair(t, system, _) => t.sups(i) || system.sups(i),
+            Value::PathP(t1, t2, t3, _) => {
+                t1.sups_for_act(i) || t2.sups_for_act(i) || t3.sups_for_act(i)
+            }
+            Value::PLam(n, t, _) => n != i && t.sups_for_act(i),
+            Value::AppFormula(t, f, _) => t.sups_for_act(i) || f.sups_for_act(i),
+            Value::Comp(t1, t2, system, _) => {
+                t1.sups_for_act(i) || t2.sups_for_act(i) || system.sups_for_act(i)
+            }
+            Value::CompU(t, system, _) => t.sups_for_act(i) || system.sups_for_act(i),
+            Value::HComp(t1, t2, system, _) => {
+                t1.sups_for_act(i) || t2.sups_for_act(i) || system.sups_for_act(i)
+            }
+            Value::Glue(t, system, _) => t.sups_for_act(i) || system.sups_for_act(i),
+            Value::GlueElem(t, system, _) => t.sups_for_act(i) || system.sups_for_act(i),
+            Value::UnGlueElem(t, system, _) => t.sups_for_act(i) || system.sups_for_act(i),
+            Value::UnGlueElemU(t, b, system, _) => {
+                t.sups_for_act(i) || b.sups_for_act(i) || system.sups_for_act(i)
+            }
+            Value::Id(t1, t2, t3, _) => {
+                t1.sups_for_act(i) || t2.sups_for_act(i) || t3.sups_for_act(i)
+            }
+            Value::IdPair(t, system, _) => t.sups_for_act(i) || system.sups_for_act(i),
 
             Value::IdJ(t1, t2, t3, t4, t5, t6, _) => {
-                t1.sups(i) || t2.sups(i) || t3.sups(i) || t4.sups(i) || t5.sups(i) || t6.sups(i)
+                t1.sups_for_act(i)
+                    || t2.sups_for_act(i)
+                    || t3.sups_for_act(i)
+                    || t4.sups_for_act(i)
+                    || t5.sups_for_act(i)
+                    || t6.sups_for_act(i)
+            }
+        }
+    }
+
+    fn sups_for_swap(&self, i: &Identifier) -> bool {
+        match self.as_ref() {
+            Value::PLam(j, v, _) => j == i || v.sups_for_swap(i),
+            Value::Stuck(_, c, _) => {
+                fn closure_sups(c: &Closure, i: &Identifier) -> bool {
+                    for (_, e) in &c.term_binds {
+                        match e.value() {
+                            EntryValueState::Cached(v) => {
+                                if v.sups_for_swap(i) {
+                                    return true;
+                                }
+                            }
+                            _ => (),
+                        }
+                    }
+                    for (_, e) in &c.type_binds {
+                        match e.value() {
+                            EntryValueState::Cached(v) => {
+                                if v.sups_for_swap(i) {
+                                    return true;
+                                }
+                            }
+                            _ => (),
+                        }
+                    }
+                    for (_, f) in &c.formula_binds {
+                        if f.sups_for_swap(i) {
+                            return true;
+                        }
+                    }
+                    false
+                }
+                closure_sups(c, i)
+            }
+            Value::Pi(a, t, _) => a.sups_for_swap(i) || t.sups_for_swap(i),
+            Value::App(t1, t2, _) => t1.sups_for_swap(i) || t2.sups_for_swap(i),
+            Value::Var(_, t, _) => t.sups_for_swap(i),
+            Value::U => false,
+            Value::Sigma(a, t, _) => a.sups_for_swap(i) || t.sups_for_swap(i),
+            Value::Pair(t1, t2, _) => t1.sups_for_swap(i) || t2.sups_for_swap(i),
+            Value::Fst(t, _) => t.sups_for_swap(i),
+            Value::Snd(t, _) => t.sups_for_swap(i),
+            Value::Con(_, ts, _) => ts.iter().any(|v| v.sups_for_swap(i)),
+            Value::PCon(_, t, ts, is, _) => {
+                t.sups_for_swap(i)
+                    || ts.iter().any(|v| v.sups_for_swap(i))
+                    || is.iter().any(|f| f.sups_for_swap(i))
+            }
+            Value::PathP(t1, t2, t3, _) => {
+                t1.sups_for_swap(i) || t2.sups_for_swap(i) || t3.sups_for_swap(i)
+            }
+            Value::AppFormula(t, f, _) => t.sups_for_swap(i) || f.sups_for_swap(i),
+            Value::Comp(t1, t2, system, _) => {
+                t1.sups_for_swap(i) || t2.sups_for_swap(i) || system.sups_for_swap(i)
+            }
+            Value::CompU(t, system, _) => t.sups_for_swap(i) || system.sups_for_swap(i),
+            Value::HComp(t1, t2, system, _) => {
+                t1.sups_for_swap(i) || t2.sups_for_swap(i) || system.sups_for_swap(i)
+            }
+            Value::Glue(t, system, _) => t.sups_for_swap(i) || system.sups_for_swap(i),
+            Value::GlueElem(t, system, _) => t.sups_for_swap(i) || system.sups_for_swap(i),
+            Value::UnGlueElem(t, system, _) => t.sups_for_swap(i) || system.sups_for_swap(i),
+            Value::UnGlueElemU(t, b, system, _) => {
+                t.sups_for_swap(i) || b.sups_for_swap(i) || system.sups_for_swap(i)
+            }
+            Value::Id(t1, t2, t3, _) => {
+                t1.sups_for_swap(i) || t2.sups_for_swap(i) || t3.sups_for_swap(i)
+            }
+            Value::IdPair(t, system, _) => t.sups_for_swap(i) || system.sups_for_swap(i),
+
+            Value::IdJ(t1, t2, t3, t4, t5, t6, _) => {
+                t1.sups_for_swap(i)
+                    || t2.sups_for_swap(i)
+                    || t3.sups_for_swap(i)
+                    || t4.sups_for_swap(i)
+                    || t5.sups_for_swap(i)
+                    || t6.sups_for_swap(i)
             }
         }
     }
 
     fn act(&self, ctx: &TypeContext, i: &Identifier, f: Formula) -> Result<Self, TypeError> {
-        let cf = f.clone();
         fn act_formula(
             ctx: &TypeContext,
             o: &Formula,
             i: &Identifier,
             f: Formula,
         ) -> Result<Option<Formula>, TypeError> {
-            if o.sups(i) {
+            if o.sups_for_act(i) {
                 Ok(Some(o.act(ctx, i, f)?))
             } else {
                 Ok(None)
@@ -216,11 +326,11 @@ impl Nominal for Rc<Value> {
 
         fn act_system(
             ctx: &TypeContext,
-            o: &System<Value>,
+            o: &System<Rc<Value>>,
             i: &Identifier,
             f: Formula,
-        ) -> Result<Option<System<Value>>, TypeError> {
-            if o.sups(i) {
+        ) -> Result<Option<System<Rc<Value>>>, TypeError> {
+            if o.sups_for_act(i) {
                 Ok(Some(o.act(ctx, i, f)?))
             } else {
                 Ok(None)
@@ -323,7 +433,7 @@ impl Nominal for Rc<Value> {
                 let new_phis = phis
                     .iter()
                     .map(|x| {
-                        if x.sups(i) {
+                        if x.sups_for_act(i) {
                             let new_x = x.act(ctx, i, f.clone())?;
                             changed = true;
                             Ok(new_x)
@@ -354,7 +464,7 @@ impl Nominal for Rc<Value> {
                 if j == i {
                     Ok(self.clone())
                 } else {
-                    if !f.sups(j) {
+                    if !f.sups_for_act(j) {
                         let new_v = v.act(ctx, i, f)?;
                         if Rc::ptr_eq(v, &new_v) {
                             Ok(self.clone())
@@ -516,7 +626,7 @@ impl Nominal for Rc<Value> {
 
     fn swap(&self, from: &Identifier, to: &Identifier) -> Self {
         fn swap_formula(o: &Formula, from: &Identifier, to: &Identifier) -> Option<Formula> {
-            if o.sups(from) || o.sups(to) {
+            if o.sups_for_swap(from) || o.sups_for_swap(to) {
                 Some(o.swap(from, to))
             } else {
                 None
@@ -524,11 +634,11 @@ impl Nominal for Rc<Value> {
         }
 
         fn swap_system(
-            o: &System<Value>,
+            o: &System<Rc<Value>>,
             from: &Identifier,
             to: &Identifier,
-        ) -> Option<System<Value>> {
-            if o.sups(from) || o.sups(to) {
+        ) -> Option<System<Rc<Value>>> {
+            if o.sups_for_swap(from) || o.sups_for_swap(to) {
                 Some(o.swap(from, to))
             } else {
                 None
@@ -634,7 +744,7 @@ impl Nominal for Rc<Value> {
                 let new_phis: Vec<_> = phis
                     .iter()
                     .map(|x| {
-                        if x.sups(from) || x.sups(to) {
+                        if x.sups_for_swap(from) || x.sups_for_swap(to) {
                             let new_x = x.swap(from, to);
                             phis_changed = true;
                             new_x
@@ -669,7 +779,7 @@ impl Nominal for Rc<Value> {
                     j
                 };
 
-                if j == k {
+                if k == j {
                     let new_v = v.swap(from, to);
                     if Rc::ptr_eq(&new_v, v) {
                         self.clone()
@@ -846,12 +956,21 @@ impl Nominal for Rc<Value> {
 
 impl<A> Nominal for System<A>
 where
-    Rc<A>: Nominal,
+    A: Nominal,
     A: Clone,
 {
-    fn sups(&self, i: &Identifier) -> bool {
+    fn sups_for_act(&self, i: &Identifier) -> bool {
         for (k, v) in self.iter() {
-            if k.binds.contains_key(i) || v.sups(i) {
+            if k.binds.contains_key(i) || v.sups_for_act(i) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    fn sups_for_swap(&self, i: &Identifier) -> bool {
+        for (k, v) in self.iter() {
+            if k.binds.contains_key(i) || v.sups_for_swap(i) {
                 return true;
             }
         }
@@ -906,13 +1025,23 @@ where
 }
 
 impl Nominal for Formula {
-    fn sups(&self, i: &Identifier) -> bool {
+    fn sups_for_act(&self, i: &Identifier) -> bool {
         match self {
             Formula::Dir(_) => false,
             Formula::Atom(identifier) => identifier == i,
             Formula::NegAtom(identifier) => identifier == i,
-            Formula::And(lhs, rhs) => lhs.sups(i) || rhs.sups(i),
-            Formula::Or(lhs, rhs) => lhs.sups(i) || rhs.sups(i),
+            Formula::And(lhs, rhs) => lhs.sups_for_act(i) || rhs.sups_for_act(i),
+            Formula::Or(lhs, rhs) => lhs.sups_for_act(i) || rhs.sups_for_act(i),
+        }
+    }
+
+    fn sups_for_swap(&self, i: &Identifier) -> bool {
+        match self {
+            Formula::Dir(_) => false,
+            Formula::Atom(identifier) => identifier == i,
+            Formula::NegAtom(identifier) => identifier == i,
+            Formula::And(lhs, rhs) => lhs.sups_for_swap(i) || rhs.sups_for_swap(i),
+            Formula::Or(lhs, rhs) => lhs.sups_for_swap(i) || rhs.sups_for_swap(i),
         }
     }
 
@@ -984,7 +1113,6 @@ pub trait Facing: Sized {
 }
 
 impl<A: Nominal + Clone> Facing for A {
-    // #[instrument(skip_all)]
     fn face(&self, ctx: &TypeContext, face: &Face) -> Result<A, TypeError> {
         face.binds.iter().fold(Ok(self.clone()), |a, (i, d)| {
             a?.act(ctx, i, Formula::Dir(d.clone()))
@@ -1022,13 +1150,13 @@ pub fn sym<A: Nominal>(ctx: &TypeContext, a: &A, i: &Identifier) -> Result<A, Ty
     a.act(ctx, i, Formula::NegAtom(*i))
 }
 
-pub fn border<A, B: Clone>(
+pub fn border<A: Clone, B: Clone>(
     ctx: &TypeContext,
-    value: &Rc<A>,
+    value: &A,
     shape: &System<B>,
 ) -> Result<System<A>, TypeError>
 where
-    Rc<A>: Facing,
+    A: Facing,
 {
     shape
         .iter()
@@ -1040,9 +1168,9 @@ mod tests {
     use std::collections::HashMap;
 
     use crate::{
-        ctt::term::{Dir, Face, Identifier, System},
-        precise::term::Value,
-        typechecker::context::TypeContext,
+        ctt::{formula::Dir, system::Face, system::System, Identifier},
+        precise::term::{Mod, Value},
+        typechecker::{canon::nominal::Nominal, context::TypeContext},
     };
 
     use super::disj;
@@ -1053,7 +1181,23 @@ mod tests {
             Face::cond(&Identifier(0), Dir::One),
             Value::u(),
         )]));
-        let k = disj(&TypeContext::empty(), &s, &Identifier(0), &Identifier(1));
+        let k = disj(&TypeContext::empty(), &s, &Identifier(4), &Identifier(1));
         println!("k {:?}", k);
+    }
+
+    #[test]
+    fn swap_with_plam() {
+        let v = Value::comp_u(
+            &Value::plam(Identifier(0), &Value::u(), Mod::Precise),
+            System::from(HashMap::from([(
+                Face::cond(&Identifier(2), Dir::Zero),
+                Value::u(),
+            )])),
+            Mod::Precise,
+        );
+
+        Value::plam(Identifier(0), &Value::u(), Mod::Precise);
+        let res = v.swap(&Identifier(2), &Identifier(1));
+        println!("res {:?}", res);
     }
 }

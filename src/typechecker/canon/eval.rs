@@ -1,6 +1,9 @@
 use tracing::instrument;
 
-use crate::ctt::term::{Dir, Face, Formula, Identifier, Label, System};
+use crate::ctt::formula::{Dir, Formula};
+use crate::ctt::system::{Face, System};
+use crate::ctt::term::Label;
+use crate::ctt::Identifier;
 use crate::precise::term::{Mod, Term, Value};
 use crate::typechecker::context::TypeContext;
 use crate::typechecker::equiv::Equiv;
@@ -98,6 +101,7 @@ pub fn eval(ctx: &TypeContext, term: &Rc<Term>) -> Result<Rc<Value>, TypeError> 
             m.clone(),
         )),
         Term::PLam(i, t, m) => {
+            // TODO maybe fresh?
             let plam_ctx = ctx.with_formula(i, Formula::Atom(*i));
             Ok(Value::plam(*i, &eval(&plam_ctx, t)?, m.clone()))
         }
@@ -156,20 +160,8 @@ pub fn eval(ctx: &TypeContext, term: &Rc<Term>) -> Result<Rc<Value>, TypeError> 
 pub fn eval_formula(ctx: &TypeContext, formula: &Formula) -> Formula {
     match formula {
         d @ Formula::Dir(_) => d.clone(),
-        Formula::Atom(name) => {
-            if let Some(form) = ctx.lookup_formula(name) {
-                form
-            } else {
-                Formula::Atom(*name)
-            }
-        }
-        Formula::NegAtom(name) => {
-            if let Some(form) = ctx.lookup_formula(name) {
-                form.negate()
-            } else {
-                Formula::NegAtom(*name)
-            }
-        }
+        Formula::Atom(name) => ctx.lookup_formula(name).unwrap(),
+        Formula::NegAtom(name) => ctx.lookup_formula(name).unwrap().negate(),
         Formula::And(lhs, rhs) => {
             let el = eval_formula(ctx, lhs.as_ref());
             let er = eval_formula(ctx, rhs.as_ref());
@@ -184,7 +176,10 @@ pub fn eval_formula(ctx: &TypeContext, formula: &Formula) -> Formula {
 }
 
 // #[instrument(skip_all)]
-pub fn eval_system(ctx: &TypeContext, system: &System<Term>) -> Result<System<Value>, TypeError> {
+pub fn eval_system(
+    ctx: &TypeContext,
+    system: &System<Rc<Term>>,
+) -> Result<System<Rc<Value>>, TypeError> {
     let mut presystem = Vec::new();
     for (alpha, t_alpha) in system.iter() {
         let mut betas = HashSet::from([Face::eps()]);
@@ -269,7 +264,7 @@ pub fn inv_formula(formula: Formula, dir: Dir) -> Vec<Face> {
     }
 }
 
-pub fn is_comp_system(ctx: &TypeContext, system: &System<Value>) -> Result<bool, TypeError> {
+pub fn is_comp_system(ctx: &TypeContext, system: &System<Rc<Value>>) -> Result<bool, TypeError> {
     for (alpha, t_alpha) in system.iter() {
         for (beta, t_beta) in system.iter() {
             if alpha.compatible(beta) {

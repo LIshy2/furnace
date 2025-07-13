@@ -1,5 +1,8 @@
-use crate::ctt::term::{Branch, Declaration, DeclarationSet, Formula, Label, System, Telescope};
-use crate::ctt::term::{Identifier, Term as CttTerm};
+use crate::ctt::{
+    formula::Formula, system::System, term::Branch, term::Declaration, term::DeclarationSet,
+    term::Label, term::Telescope,
+};
+use crate::ctt::{term::Term as CttTerm, Identifier};
 
 use crate::precise::context::PreciseContext;
 use crate::precise::term::{Mod, Term};
@@ -29,14 +32,14 @@ pub enum PreTerm {
     PathP(Rc<PreTerm>, Rc<PreTerm>, Rc<PreTerm>, Tag),
     PLam(Identifier, Rc<PreTerm>, Tag),
     AppFormula(Rc<PreTerm>, Formula, Tag),
-    Comp(Rc<PreTerm>, Rc<PreTerm>, System<PreTerm>, Tag),
-    Fill(Rc<PreTerm>, Rc<PreTerm>, System<PreTerm>, Tag),
-    HComp(Rc<PreTerm>, Rc<PreTerm>, System<PreTerm>, Tag),
-    Glue(Rc<PreTerm>, System<PreTerm>, Tag),
-    GlueElem(Rc<PreTerm>, System<PreTerm>, Tag),
-    UnGlueElem(Rc<PreTerm>, System<PreTerm>, Tag),
+    Comp(Rc<PreTerm>, Rc<PreTerm>, System<Rc<PreTerm>>, Tag),
+    Fill(Rc<PreTerm>, Rc<PreTerm>, System<Rc<PreTerm>>, Tag),
+    HComp(Rc<PreTerm>, Rc<PreTerm>, System<Rc<PreTerm>>, Tag),
+    Glue(Rc<PreTerm>, System<Rc<PreTerm>>, Tag),
+    GlueElem(Rc<PreTerm>, System<Rc<PreTerm>>, Tag),
+    UnGlueElem(Rc<PreTerm>, System<Rc<PreTerm>>, Tag),
     Id(Rc<PreTerm>, Rc<PreTerm>, Rc<PreTerm>, Tag),
-    IdPair(Rc<PreTerm>, System<PreTerm>, Tag),
+    IdPair(Rc<PreTerm>, System<Rc<PreTerm>>, Tag),
     IdJ(
         Rc<PreTerm>,
         Rc<PreTerm>,
@@ -320,7 +323,7 @@ fn analyze_tele(ctx: &mut PreciseContext, t: &Telescope<CttTerm<()>>) -> Telesco
     }
 }
 
-fn analyze_system(ctx: &mut PreciseContext, t: &System<CttTerm<()>>) -> System<PreTerm> {
+fn analyze_system(ctx: &mut PreciseContext, t: &System<Rc<CttTerm<()>>>) -> System<Rc<PreTerm>> {
     t.iter()
         .map(|(f, t)| (f.clone(), analyze(ctx, t)))
         .collect()
@@ -535,7 +538,7 @@ pub fn finalize_term(ctx: &mut PreciseContext, t: &Rc<PreTerm>) -> Rc<Term> {
     }
 }
 
-pub fn finalize_system(ctx: &mut PreciseContext, sys: &System<PreTerm>) -> System<Term> {
+pub fn finalize_system(ctx: &mut PreciseContext, sys: &System<Rc<PreTerm>>) -> System<Rc<Term>> {
     sys.iter()
         .map(|(k, v)| (k.clone(), finalize_term(ctx, v)))
         .collect()

@@ -1,5 +1,5 @@
 mod tests {
-    use furnace::ctt::term::Identifier;
+    use furnace::ctt::Identifier;
     use furnace::parser;
     use furnace::parser::ast::Module;
     use furnace::precise::analyze::mark_erased;

@@ -1,9 +1,12 @@
 use std::{collections::HashMap, iter, rc::Rc};
 
-use tracing::instrument;
-
 use crate::{
-    ctt::term::{anon_id, Dir, Face, Formula, Identifier, System},
+    ctt::{
+        formula::{Dir, Formula},
+        system::{Face, System},
+        term::anon_id,
+        Identifier,
+    },
     precise::term::{Mod, Term, Value},
     typechecker::{
         context::TypeContext,
@@ -23,7 +26,7 @@ pub fn fill_line(
     ctx: &TypeContext,
     a: &Rc<Value>,
     u: &Rc<Value>,
-    ts: &System<Value>,
+    ts: &System<Rc<Value>>,
 ) -> Result<Rc<Value>, TypeError> {
     let i = ctx.fresh();
 
@@ -49,7 +52,7 @@ pub fn fill(
     i: &Identifier,
     a: &Rc<Value>,
     u: &Rc<Value>,
-    ts: System<Value>,
+    ts: System<Rc<Value>>,
 ) -> Result<Rc<Value>, TypeError> {
     let j = ctx.fresh();
     comp(
@@ -65,7 +68,7 @@ pub fn comp_line(
     ctx: &TypeContext,
     a: &Rc<Value>,
     u: &Rc<Value>,
-    ts: System<Value>,
+    ts: System<Rc<Value>>,
 ) -> Result<Rc<Value>, TypeError> {
     let i = ctx.fresh();
 
@@ -86,7 +89,7 @@ pub fn hcomp(
     ctx: &TypeContext,
     a: &Rc<Value>,
     u: &Rc<Value>,
-    us: System<Value>,
+    us: System<Rc<Value>>,
 ) -> Result<Rc<Value>, TypeError> {
     if let Some(result) = us.get(&Face::eps()) {
         app_formula(ctx, result, Formula::Dir(Dir::One))
@@ -119,7 +122,6 @@ fn trans(
     v0: &Rc<Value>,
     v1: &Rc<Value>,
 ) -> Result<Rc<Value>, TypeError> {
-    // println!("trans v1={:?}", &format!("{:?}", v1)[0..10]);
     comp(ctx, i, v0, v1, &System::empty())
 }
 
@@ -143,7 +145,7 @@ pub fn comp(
     i: &Identifier,
     a: &Rc<Value>,
     u: &Rc<Value>,
-    ts: &System<Value>,
+    ts: &System<Rc<Value>>,
 ) -> Result<Rc<Value>, TypeError> {
     if let Some(t) = ts.get(&Face::eps()) {
         return t.face(ctx, &Face::cond(i, Dir::One));
@@ -307,9 +309,9 @@ pub fn comp(
 fn is_comp_neutral(
     ctx: &TypeContext,
     i: &Identifier,
-    equivs: &System<Value>,
+    equivs: &System<Rc<Value>>,
     u0: &Rc<Value>,
-    ts: &System<Value>,
+    ts: &System<Rc<Value>>,
 ) -> Result<bool, TypeError> {
     let equivsi0 = equivs.face(ctx, &Face::cond(i, Dir::Zero))?;
     Ok((!equivsi0.contains(&Face::eps()) && u0.is_neutral())
@@ -323,7 +325,7 @@ fn is_comp_neutral(
             })?)
 }
 
-fn is_system_neutral(s: &System<Value>) -> bool {
+fn is_system_neutral(s: &System<Rc<Value>>) -> bool {
     s.values().any(|x| x.is_neutral())
 }
 
@@ -332,9 +334,9 @@ fn comp_u(
     ctx: &TypeContext,
     i: &Identifier,
     a: &Rc<Value>,
-    eqs: System<Value>,
+    eqs: System<Rc<Value>>,
     wi0: &Rc<Value>,
-    ws: System<Value>,
+    ws: System<Rc<Value>>,
 ) -> Result<Rc<Value>, TypeError> {
     let ai1 = a.face(ctx, &Face::cond(i, Dir::One))?;
 
@@ -483,7 +485,7 @@ fn comp_neg(
     i: &Identifier,
     a: &Rc<Value>,
     u: &Rc<Value>,
-    ts: System<Value>,
+    ts: System<Rc<Value>>,
 ) -> Result<Rc<Value>, TypeError> {
     comp(ctx, i, &sym(ctx, a, i)?, u, &sym(ctx, &ts, i)?)
 }
@@ -583,9 +585,9 @@ fn comp_glue(
     ctx: &TypeContext,
     i: &Identifier,
     a: &Rc<Value>,
-    eqs: System<Value>,
+    eqs: System<Rc<Value>>,
     wi0: &Rc<Value>,
-    ws: System<Value>,
+    ws: System<Rc<Value>>,
 ) -> Result<Rc<Value>, TypeError> {
     let ai1 = a.face(ctx, &Face::cond(i, Dir::One))?;
 
@@ -674,7 +676,7 @@ fn comp_glue(
                 fibersys
                     .face(ctx, gamma)?
                     .iter()
-                    .map(|(f, t)| (f.clone(), t.clone())),
+                    .map(|(f, v)| (f.clone(), v.clone())),
             )
             .collect();
             // TODO make union
@@ -715,13 +717,12 @@ fn comp_glue(
     Ok(glue_elem(&vi1, usi1, Mod::Precise))
 }
 
-// #[instrument(skip_all)]
 fn comp_hit(
     ctx: &TypeContext,
     i: &Identifier,
     a: &Rc<Value>,
     u: &Rc<Value>,
-    us: System<Value>,
+    us: System<Rc<Value>>,
 ) -> Result<Rc<Value>, TypeError> {
     hcomp(
         ctx,
@@ -740,7 +741,6 @@ fn comp_hit(
     )
 }
 
-// #[instrument(skip_all)]
 fn squeeze_hit(
     ctx: &TypeContext,
     i: &Identifier,
@@ -815,7 +815,6 @@ fn squeeze_hit(
     }
 }
 
-// #[instrument(skip_all)]
 fn transp_hit(
     ctx: &TypeContext,
     i: &Identifier,
@@ -876,7 +875,7 @@ fn transp_hit(
 pub fn comp_univ(
     ctx: &TypeContext,
     b: &Rc<Value>,
-    es: System<Value>,
+    es: System<Rc<Value>>,
 ) -> Result<Rc<Value>, TypeError> {
     if let Some(res) = es.get(&Face::eps()) {
         app_formula(ctx, res, Formula::Dir(Dir::One))
@@ -891,7 +890,7 @@ fn path_comp(
     a: &Rc<Value>,
     u0: &Rc<Value>,
     u: &Rc<Value>,
-    us: System<Value>,
+    us: System<Rc<Value>>,
 ) -> Result<Rc<Value>, TypeError> {
     let j = ctx.fresh();
     let us_ = us.insert(Face::cond(&j, Dir::One), u.clone());
@@ -947,7 +946,7 @@ fn extend(
     ctx: &TypeContext,
     b: &Rc<Value>,
     q: &Rc<Value>,
-    ts: System<Value>,
+    ts: System<Rc<Value>>,
 ) -> Result<Rc<Value>, TypeError> {
     let i = ctx.fresh();
     let ts_ = ts
@@ -1012,7 +1011,7 @@ fn comp_const_line(
     ctx: &TypeContext,
     a: &Rc<Value>,
     u: &Rc<Value>,
-    ts: System<Value>,
+    ts: System<Rc<Value>>,
 ) -> Result<Rc<Value>, TypeError> {
     let i = ctx.fresh();
     let ts_ = ts

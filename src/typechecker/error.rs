@@ -1,4 +1,5 @@
-use crate::ctt::term::{Identifier, System};
+use crate::ctt::system::System;
+use crate::ctt::Identifier;
 use crate::precise::term::{Term, Value};
 use std::backtrace::Backtrace;
 use std::error::Error;
@@ -23,7 +24,7 @@ pub enum ErrorCause {
     UnknownInterval,
     MissingBranch,
     WrongPathEnd((Rc<Value>, Rc<Value>), (Rc<Value>, Rc<Value>)),
-    UneqInHSumSplit(System<Value>, System<Value>),
+    UneqInHSumSplit(System<Rc<Value>>, System<Rc<Value>>),
 }
 
 pub struct TypeError {

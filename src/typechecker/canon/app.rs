@@ -3,7 +3,11 @@ use std::{collections::HashMap, rc::Rc};
 use tracing::instrument;
 
 use crate::{
-    ctt::term::{Branch, Dir, Formula, Identifier, System},
+    ctt::{
+        formula::{Dir, Formula},
+        system::System,
+        term::Branch,
+    },
     precise::term::{Mod, Term, Value},
     typechecker::{
         context::TypeContext,
@@ -20,16 +24,9 @@ use super::{
 pub fn app(ctx: &TypeContext, fun: &Rc<Value>, arg: &Rc<Value>) -> Result<Rc<Value>, TypeError> {
     match (fun.as_ref(), arg.as_ref()) {
         (Value::Stuck(Term::Lam(x, _, body, _), e, _), _) => {
-            if x == &Identifier(48) {
-                println!("start");
-            }
-            let body_ctx = ctx.in_closure(e).with_term(x, arg);
-            let res = eval(&body_ctx, body);
-            if x == &Identifier(48) {
-                println!("arg {:?}", arg);
-                println!("end {:?}", res);
-            }
-            res
+            let lambda_ctx = ctx.in_closure(e);
+            let body_ctx = lambda_ctx.with_term(x, arg);
+            eval(&body_ctx, body)
         }
         (Value::Stuck(Term::Split(_, ty, branches, _), se, _), Value::Con(c, vs, _)) => {
             let branch = branches
@@ -79,10 +76,6 @@ pub fn app(ctx: &TypeContext, fun: &Rc<Value>, arg: &Rc<Value>) -> Result<Rc<Val
                 Err(ErrorCause::Hole)?
             };
 
-            let Value::Stuck(Term::Lam(_, _, _, _), e, _) = lam.as_ref() else {
-                Err(ErrorCause::Hole)?
-            };
-
             let Value::Stuck(Term::Sum(_, labels, _) | Term::HSum(_, labels, _), de, _) =
                 data_tpe.as_ref()
             else {
@@ -91,8 +84,8 @@ pub fn app(ctx: &TypeContext, fun: &Rc<Value>, arg: &Rc<Value>) -> Result<Rc<Val
 
             match branch {
                 Branch::PBranch(_, xs, is, t) => {
-                    let mut body_ctx = ctx.in_closure(se).in_closure(de);
-                    let mut tpe_ctx = ctx.in_closure(e).in_closure(de).clone();
+                    let mut body_ctx = ctx.in_closure(se);
+                    let mut tpe_ctx = ctx.in_closure(de).clone();
 
                     let label = labels.iter().find(|l| &l.name() == c).unwrap();
                     let tele = label.telescope();
@@ -117,14 +110,14 @@ pub fn app(ctx: &TypeContext, fun: &Rc<Value>, arg: &Rc<Value>) -> Result<Rc<Val
                     let wsj = ws
                         .iter()
                         .map(|(f, v)| Ok((f.clone(), app_formula(ctx, v, Formula::Atom(j))?)))
-                        .collect::<Result<System<Value>, TypeError>>()?;
+                        .collect::<Result<System<Rc<Value>>, TypeError>>()?;
                     let w_ = app(ctx, fun, w)?;
                     let ws_ = wsj
                         .iter()
                         .map(|(alpha, t_alpha)| {
                             Ok((alpha.clone(), app(ctx, &fun.face(ctx, alpha)?, t_alpha)?))
                         })
-                        .collect::<Result<System<Value>, TypeError>>()?;
+                        .collect::<Result<System<Rc<Value>>, TypeError>>()?;
                     comp(
                         ctx,
                         &j,
@@ -164,9 +157,9 @@ pub fn app(ctx: &TypeContext, fun: &Rc<Value>, arg: &Rc<Value>) -> Result<Rc<Val
             }
             let sm = System::from(m);
             let res = comp(&ctx, &j, &app(&ctx, &fj, &v)?, &app(&ctx, li0, &vi0)?, &sm)?;
-            if res.sups(&j) {
-                panic!("jjjj");
-            }
+            // if res.sups(&j) {
+            //     panic!("jjjj");
+            // }
             Ok(res)
         }
         _ if fun.is_neutral() => Ok(Value::app(fun, arg, Mod::Precise)),
@@ -189,7 +182,7 @@ pub fn app_formula(
         v if v.is_neutral() => {
             // println!("infer_value {:?}", v);
             let tpe = infer_value(ctx, term).inspect_err(|err| {
-                println!("erroooor {:?} {:?}", term, formula);
+                println!("erroooor {:?}", term);
             })?;
             match (tpe.as_ref(), formula) {
                 (Value::PathP(_, a0, _, _), Formula::Dir(Dir::Zero)) => Ok(a0.clone()),
@@ -201,10 +194,9 @@ pub fn app_formula(
     }
 }
 
-// #[instrument(skip_all)]
 fn infer_value(ctx: &TypeContext, v: &Rc<Value>) -> Result<Rc<Value>, TypeError> {
     match v.as_ref() {
-        Value::Var(name, tpe, _) => Ok(tpe.clone()),
+        Value::Var(_, t, _) => Ok(t.clone()),
         Value::Stuck(Term::Undef(t, _), e, _) => eval(&ctx.in_closure(e), t),
         Value::Fst(t, _) => {
             let res = infer_value(ctx, t)?;

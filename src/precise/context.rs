@@ -1,4 +1,4 @@
-use crate::ctt::term::Identifier;
+use crate::ctt::Identifier;
 use std::collections::HashMap;
 
 #[derive(Copy, Clone, Debug)]

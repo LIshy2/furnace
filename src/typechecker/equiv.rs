@@ -1,13 +1,11 @@
-use tracing::instrument;
-
-use crate::ctt::term::{Dir, Formula, Identifier, System};
+use crate::ctt::{formula::Dir, formula::Formula, system::System, Identifier};
 use crate::precise::term::{Mod, Term, Value};
 use crate::typechecker::canon::eval::eval_formula;
 use crate::typechecker::context::TypeContext;
 use crate::typechecker::error::TypeError;
+use std::backtrace::Backtrace;
 use std::collections::HashSet;
 use std::fmt::Debug;
-use std::panic::AssertUnwindSafe;
 use std::rc::Rc;
 
 use super::canon::app::{app, app_formula};
@@ -19,12 +17,7 @@ pub trait Equiv {
 }
 
 impl Equiv for Rc<Value> {
-    // #[instrument(skip_all)]
     fn equiv(ctx: &TypeContext, lhs: &Self, rhs: &Self) -> Result<bool, TypeError> {
-        if lhs.sups(&Identifier(133159)) || rhs.sups(&Identifier(135308)) {
-            println!("eq? {:?} {:?}", lhs, rhs);
-            panic!();
-        }
         match (lhs.as_ref(), rhs.as_ref()) {
             (
                 Value::Stuck(Term::Split(p, _, _, _), _, _),
@@ -54,12 +47,6 @@ impl Equiv for Rc<Value> {
                 println!("HOLE");
                 Ok(false)
             }
-            (Value::Pi(a1, lam1, _), Value::Pi(a2, lam2, _)) => {
-                Ok(Equiv::equiv(ctx, lam1, lam2)? && Equiv::equiv(ctx, a1, a2)?)
-            }
-            (Value::Sigma(a1, lam1, _), Value::Sigma(a2, lam2, _)) => {
-                Ok(Equiv::equiv(ctx, lam1, lam2)? && Equiv::equiv(ctx, a1, a2)?)
-            }
             (Value::Con(c, us, _), Value::Con(c_, us_, _)) => {
                 let field_eq = c == c_
                     && us.len() == us_.len()
@@ -69,6 +56,9 @@ impl Equiv for Rc<Value> {
                         .fold(Ok::<bool, TypeError>(true), |acc, (l, r)| {
                             Ok(acc? && Equiv::equiv(ctx, l, r)?)
                         })?;
+                if c != c_ {
+                    println!("FUCKKKKKKK {:?} {:?}", c, c_);
+                }
                 Ok(c == c_ && field_eq)
             }
             (Value::PCon(c, v, us, phis, _), Value::PCon(c_, v_, us_, phis_, _)) => {
@@ -89,6 +79,10 @@ impl Equiv for Rc<Value> {
                         .fold(Ok::<bool, TypeError>(true), |acc, (l, r)| {
                             Ok(acc? && Equiv::equiv(ctx, l, r)?)
                         })?;
+                if c != c_ {
+                    println!("FUCKKKKKKK {:?} {:?}", c, c_);
+                }
+
                 Ok(c == c_ && field_eq && interval_eq && Equiv::equiv(ctx, v, v_)?)
             }
             (Value::Pair(u, v, _), Value::Pair(u_, v_, _)) => {
@@ -129,6 +123,43 @@ impl Equiv for Rc<Value> {
             (Value::Glue(v, equivs, _), Value::Glue(v_, equivs_, _)) => {
                 Ok(Equiv::equiv(ctx, v, v_)? && Equiv::equiv(ctx, equivs, equivs_)?)
             }
+            (Value::UnGlueElem(u, _, _), Value::UnGlueElem(u_, _, _)) => Equiv::equiv(ctx, u, u_),
+            (Value::UnGlueElemU(u, _, _, _), Value::UnGlueElemU(u_, _, _, _)) => {
+                Equiv::equiv(ctx, u, u_)
+            }
+            (Value::IdPair(v, vs, _), Value::IdPair(v_, vs_, _)) => {
+                Ok(Equiv::equiv(ctx, v, v_)? && Equiv::equiv(ctx, vs, vs_)?)
+            }
+            (Value::Id(a, u, v, _), Value::Id(a_, u_, v_, _)) => Ok(Equiv::equiv(ctx, a, a_)?
+                && Equiv::equiv(ctx, u, u_)?
+                && Equiv::equiv(ctx, v, v_)?),
+            (Value::IdJ(a, u, c, d, x, p, _), Value::IdJ(a_, u_, c_, d_, x_, p_, _)) => {
+                Ok(Equiv::equiv(ctx, a, a_)?
+                    && Equiv::equiv(ctx, u, u_)?
+                    && Equiv::equiv(ctx, c, c_)?
+                    && Equiv::equiv(ctx, d, d_)?
+                    && Equiv::equiv(ctx, x, x_)?
+                    && Equiv::equiv(ctx, p, p_)?)
+            }
+
+            (l, r) if l == r => Ok(true),
+            (Value::Pi(a1, lam1, _), Value::Pi(a2, lam2, _)) => {
+                let y = ctx.fresh();
+                let var = Value::var(y, a1, Mod::Precise);
+                Ok(Equiv::equiv(ctx, a1, a2)?
+                    && Equiv::equiv(ctx, &app(ctx, lam1, &var)?, &app(ctx, lam2, &var)?)?)
+            }
+            (Value::Sigma(a1, lam1, _), Value::Sigma(a2, lam2, _)) => {
+                let y = ctx.fresh();
+                let var = Value::var(y, a1, Mod::Precise);
+
+                Ok(Equiv::equiv(ctx, a1, a2)?
+                    && Equiv::equiv(
+                        &ctx.with_term(&y, &var),
+                        &app(ctx, lam1, &var)?,
+                        &app(ctx, lam2, &var)?,
+                    )?)
+            }
             (Value::GlueElem(u, ts, _), other) => match (u.as_ref(), other) {
                 (Value::UnGlueElem(b, equivs, _), _) | (Value::UnGlueElemU(b, _, equivs, _), _) => {
                     Ok(Equiv::equiv(ctx, &border(ctx, b, equivs)?, ts)?
@@ -152,31 +183,11 @@ impl Equiv for Rc<Value> {
                 }
                 _ => Ok(false),
             },
-            (Value::UnGlueElem(u, _, _), Value::UnGlueElem(u_, _, _)) => Equiv::equiv(ctx, u, u_),
-            (Value::UnGlueElemU(u, _, _, _), Value::UnGlueElemU(u_, _, _, _)) => {
-                Equiv::equiv(ctx, u, u_)
-            }
-            (Value::IdPair(v, vs, _), Value::IdPair(v_, vs_, _)) => {
-                Ok(Equiv::equiv(ctx, v, v_)? && Equiv::equiv(ctx, vs, vs_)?)
-            }
-            (Value::Id(a, u, v, _), Value::Id(a_, u_, v_, _)) => Ok(Equiv::equiv(ctx, a, a_)?
-                && Equiv::equiv(ctx, u, u_)?
-                && Equiv::equiv(ctx, v, v_)?),
-            (Value::IdJ(a, u, c, d, x, p, _), Value::IdJ(a_, u_, c_, d_, x_, p_, _)) => {
-                Ok(Equiv::equiv(ctx, a, a_)?
-                    && Equiv::equiv(ctx, u, u_)?
-                    && Equiv::equiv(ctx, c, c_)?
-                    && Equiv::equiv(ctx, d, d_)?
-                    && Equiv::equiv(ctx, x, x_)?
-                    && Equiv::equiv(ctx, p, p_)?)
-            }
-            (l, r) if l == r => Ok(true),
             (
                 Value::Stuck(Term::Lam(x, a, u, _), e, _),
-                Value::Stuck(Term::Lam(x_, a_, u_, _), e_, _),
+                Value::Stuck(Term::Lam(x_, _, u_, _), e_, _),
             ) => {
                 let a = eval(&ctx.in_closure(e), a)?;
-                let a_ = eval(&ctx.in_closure(e_), a_)?;
 
                 let y = ctx.fresh();
                 let eq_ctx = ctx.with_term(&y, &Value::var(y, &a, Mod::Precise));
@@ -185,12 +196,12 @@ impl Equiv for Rc<Value> {
                     .with_term(x, &Value::var(y, &a, Mod::Precise));
                 let ctx_rhs = eq_ctx
                     .in_closure(e_)
-                    .with_term(x_, &Value::var(y, &a_, Mod::Precise));
+                    .with_term(x_, &Value::var(y, &a, Mod::Precise));
 
                 let be1 = eval(&ctx_lhs, u)?;
                 let be2 = eval(&ctx_rhs, u_)?;
 
-                Ok(Equiv::equiv(ctx, &a, &a_)? && Equiv::equiv(&eq_ctx, &be1, &be2)?)
+                Equiv::equiv(&eq_ctx, &be1, &be2)
             }
             (Value::Stuck(Term::Lam(x, tpe, u, _), e, _), _) => {
                 let tpe = eval(&ctx.in_closure(e), tpe)?;
@@ -228,9 +239,11 @@ impl Equiv for Rc<Value> {
             }
             (Value::PLam(i, a, _), Value::PLam(i_, a_, _)) => {
                 let j = ctx.fresh();
-                let ctx = ctx.with_formula(&j, Formula::Atom(j));
-                let res = Equiv::equiv(&ctx, &a.swap(i, &j), &a_.swap(i_, &j))?;
-                Ok(res)
+                let ctx = ctx
+                    .with_formula(&j, Formula::Atom(j))
+                    .with_formula(i, Formula::Atom(j))
+                    .with_formula(i_, Formula::Atom(j));
+                Equiv::equiv(&ctx, &a.swap(i, &j), &a_.swap(i_, &j))
             }
             (Value::PLam(i, a, _), _) => {
                 let j = ctx.fresh();
@@ -260,7 +273,7 @@ impl Equiv for Rc<Value> {
 
 impl<'a, A> Equiv for System<A>
 where
-    Rc<A>: Equiv,
+    A: Equiv,
     A: Clone,
     A: Debug,
 {
@@ -274,12 +287,15 @@ where
                         break;
                     }
                 } else {
+                    println!("system unknown key {:?} {:?}", lhs, rhs);
+                    println!("uneq trace {}", Backtrace::capture());
                     eq = false;
                     break;
                 }
             }
             Ok(eq)
         } else {
+            println!("System uneq size");
             Ok(false)
         }
     }
@@ -387,7 +403,6 @@ impl Equiv for Formula {
             if rhs == &Formula::Atom(Identifier(2565)) && lhs == &Formula::Atom(Identifier(2566)) {
                 return Ok(true);
             }
-
             panic!("{:?} {:?}", lhs, rhs);
         }
         Ok(res)

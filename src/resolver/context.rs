@@ -1,4 +1,4 @@
-use crate::ctt::term;
+use crate::ctt::{self, term};
 use crate::parser::ast::AIdent;
 use crate::resolver::error::ResolveError;
 use crate::resolver::error::ResolveError::{UnresolvedName, UnresolvedVar};
@@ -20,11 +20,11 @@ impl Generator {
         }
     }
 
-    fn inc(&mut self, name: &AIdent) -> term::Identifier {
+    fn inc(&mut self, name: &AIdent) -> ctt::Identifier {
         let res = self.num;
         self.dict.push(name.clone());
         self.num += 1;
-        term::Identifier(res)
+        ctt::Identifier(res)
     }
 }
 
@@ -38,7 +38,7 @@ enum SymbolKind {
 
 #[derive(Clone)]
 pub struct ResolveContext {
-    binds: HashTrieMap<String, (SymbolKind, term::Identifier)>,
+    binds: HashTrieMap<String, (SymbolKind, ctt::Identifier)>,
     counter: Rc<RefCell<Generator>>,
 }
 
@@ -129,7 +129,7 @@ impl ResolveContext {
         }
     }
 
-    pub fn resolve_identifier(&self, ident: &str) -> Result<term::Identifier, ResolveError> {
+    pub fn resolve_identifier(&self, ident: &str) -> Result<ctt::Identifier, ResolveError> {
         if let Some((kind, id)) = self.binds.get(ident) {
             match kind {
                 SymbolKind::Variable => Ok(*id),
@@ -141,7 +141,7 @@ impl ResolveContext {
         }
     }
 
-    pub fn resolve_name(&self, ident: &str) -> Result<term::Identifier, ResolveError> {
+    pub fn resolve_name(&self, ident: &str) -> Result<ctt::Identifier, ResolveError> {
         if let Some((SymbolKind::Name, id)) = self.binds.get(ident) {
             Ok(*id)
         } else {
@@ -151,11 +151,11 @@ impl ResolveContext {
 }
 
 pub trait Demangler {
-    fn demangle(&self, id: &term::Identifier) -> AIdent;
+    fn demangle(&self, id: &ctt::Identifier) -> AIdent;
 }
 
 impl Demangler for ResolveContext {
-    fn demangle(&self, id: &term::Identifier) -> AIdent {
+    fn demangle(&self, id: &ctt::Identifier) -> AIdent {
         self.counter.borrow().dict[id.0].clone()
     }
 }
