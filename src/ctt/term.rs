@@ -13,6 +13,8 @@ use std::rc::Rc;
 use rpds::HashTrieMap;
 use rpds::HashTrieSet;
 
+use crate::ctt::alpha_eq::AlphaContext;
+use crate::ctt::alpha_eq::AlphaEq;
 use crate::ctt::formula::Formula;
 use crate::ctt::system::System;
 use crate::ctt::Identifier;
@@ -213,15 +215,30 @@ impl<M> Term<M> {
         Rc::new(Term::AppFormula(fun.clone(), formula, meta))
     }
 
-    pub fn comp(a: &Rc<Term<M>>, t: &Rc<Term<M>>, sys: System<Rc<Term<M>>>, meta: M) -> Rc<Term<M>> {
+    pub fn comp(
+        a: &Rc<Term<M>>,
+        t: &Rc<Term<M>>,
+        sys: System<Rc<Term<M>>>,
+        meta: M,
+    ) -> Rc<Term<M>> {
         Rc::new(Term::Comp(a.clone(), t.clone(), sys, meta))
     }
 
-    pub fn fill(a: &Rc<Term<M>>, t: &Rc<Term<M>>, sys: System<Rc<Term<M>>>, meta: M) -> Rc<Term<M>> {
+    pub fn fill(
+        a: &Rc<Term<M>>,
+        t: &Rc<Term<M>>,
+        sys: System<Rc<Term<M>>>,
+        meta: M,
+    ) -> Rc<Term<M>> {
         Rc::new(Term::Fill(a.clone(), t.clone(), sys, meta))
     }
 
-    pub fn hcomp(a: &Rc<Term<M>>, t: &Rc<Term<M>>, sys: System<Rc<Term<M>>>, meta: M) -> Rc<Term<M>> {
+    pub fn hcomp(
+        a: &Rc<Term<M>>,
+        t: &Rc<Term<M>>,
+        sys: System<Rc<Term<M>>>,
+        meta: M,
+    ) -> Rc<Term<M>> {
         Rc::new(Term::HComp(a.clone(), t.clone(), sys, meta))
     }
 

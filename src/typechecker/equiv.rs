@@ -1,3 +1,4 @@
+use crate::ctt::alpha_eq::{AlphaContext, AlphaEq};
 use crate::ctt::{formula::Dir, formula::Formula, system::System, Identifier};
 use crate::precise::term::{Mod, Term, Value};
 use crate::typechecker::canon::eval::eval_formula;
@@ -7,6 +8,7 @@ use std::backtrace::Backtrace;
 use std::collections::HashSet;
 use std::fmt::Debug;
 use std::rc::Rc;
+use std::time::SystemTime;
 
 use super::canon::app::{app, app_formula};
 use super::canon::eval::{eval, get_first, get_second};
@@ -18,7 +20,10 @@ pub trait Equiv {
 
 impl Equiv for Rc<Value> {
     fn equiv(ctx: &TypeContext, lhs: &Self, rhs: &Self) -> Result<bool, TypeError> {
-        match (lhs.as_ref(), rhs.as_ref()) {
+        // return Ok(true);
+        // let begin = SystemTime::now();
+
+        let res = match (lhs.as_ref(), rhs.as_ref()) {
             (
                 Value::Stuck(Term::Split(p, _, _, _), _, _),
                 Value::Stuck(Term::Split(p_, _, _, _), _, _),
@@ -141,8 +146,10 @@ impl Equiv for Rc<Value> {
                     && Equiv::equiv(ctx, x, x_)?
                     && Equiv::equiv(ctx, p, p_)?)
             }
-
-            (l, r) if l == r => Ok(true),
+            (Value::AppFormula(u, x, _), Value::AppFormula(u_, x_, _)) => {
+                Ok(Equiv::equiv(ctx, u, u_)? && Equiv::equiv(ctx, x, x_)?)
+            }
+            (l, r) if AlphaEq::eq(&AlphaContext::new(), l, r) => Ok(true),
             (Value::Pi(a1, lam1, _), Value::Pi(a2, lam2, _)) => {
                 let y = ctx.fresh();
                 let var = Value::var(y, a1, Mod::Precise);
@@ -238,6 +245,8 @@ impl Equiv for Rc<Value> {
                 )
             }
             (Value::PLam(i, a, _), Value::PLam(i_, a_, _)) => {
+                // println!("{}", AlphaEq::eq(&AlphaContext::new(), lhs, rhs));
+                // panic!("{:?} {:?}", lhs, rhs);
                 let j = ctx.fresh();
                 let ctx = ctx
                     .with_formula(&j, Formula::Atom(j))
@@ -263,11 +272,13 @@ impl Equiv for Rc<Value> {
                     &a_.swap(i_, &j),
                 )
             }
-            (Value::AppFormula(u, x, _), Value::AppFormula(u_, x_, _)) => {
-                Ok(Equiv::equiv(ctx, u, u_)? && Equiv::equiv(ctx, x, x_)?)
-            }
             _ => Ok(false),
-        }
+        };
+        // let end = SystemTime::now();
+        // if lhs != rhs && end.duration_since(begin).unwrap().as_secs() > 3 {
+        // println!("not fast-eq {:?} {:?}", lhs, rhs);
+        // }
+        res
     }
 }
 

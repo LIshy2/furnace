@@ -1,6 +1,6 @@
 use crate::ctt::Identifier;
 
-#[derive(Clone, Eq, PartialEq, Hash, Debug)]
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
 pub enum Dir {
     Zero,
     One,

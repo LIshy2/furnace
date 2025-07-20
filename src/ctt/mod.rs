@@ -1,3 +1,4 @@
+pub mod alpha_eq;
 pub mod formula;
 pub mod system;
 pub mod term;

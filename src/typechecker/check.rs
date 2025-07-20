@@ -139,24 +139,15 @@ pub fn check_declaration_set(
     match set {
         DeclarationSet::Mutual(decls) => {
             let mut new_ctx = ctx.clone();
-            let mutual_namespace = decls.iter().map(|d| d.name).collect::<Vec<_>>();
-            for decl in decls.iter() {
-                ctx.decl_check_started(&decl.name);
-                let tpe = eval(&new_ctx, &decl.tpe)?;
-                let pre_ctx = new_ctx.with_term(
-                    &decl.name,
-                    &Value::stuck(
-                        decl.body.as_ref().clone(),
-                        ctx.closure_mutuals(&decl.body, &mutual_namespace),
-                        Mod::Precise,
-                    ),
-                );
-                let check_span = trace_span!("check", def = ?decl.name);
-                let _enter = check_span.enter();
-                check(&pre_ctx, &decl.body, &tpe)?;
-                drop(_enter);
+
+            for decl in decls {
                 new_ctx = new_ctx.with_lazy_term(&decl.name, &decl.body, &decl.tpe);
-                ctx.decl_check_finished(&decl.name);
+            }
+            for decl in decls {
+                new_ctx.decl_check_started(&decl.name);
+                let tpe = eval(&new_ctx, &decl.tpe)?;
+                check(&new_ctx, &decl.body, &tpe)?;
+                new_ctx.decl_check_finished(&decl.name);
             }
             Ok(new_ctx)
         }
@@ -229,13 +220,13 @@ pub fn check_plam_system(
 
 fn check_equiv(ctx: &TypeContext, term: &Rc<Term>, tpe: &Rc<Value>) -> Result<(), TypeError> {
     let eq_tpe = {
-        let a_lit = ctx.fresh();
-        let t_lit = ctx.fresh();
-        let x_lit = ctx.fresh();
-        let f_lit = ctx.fresh();
-        let y_lit = ctx.fresh();
-        let s_lit = ctx.fresh();
-        let z_lit = ctx.fresh();
+        let a_lit = Identifier(1);
+        let t_lit = Identifier(2);
+        let x_lit = Identifier(3);
+        let f_lit = Identifier(4);
+        let y_lit = Identifier(5);
+        let s_lit = Identifier(6);
+        let z_lit = Identifier(7);
 
         let new_ctx = ctx.with_term(&a_lit, tpe);
         let t = Term::var(t_lit, Mod::Precise);
@@ -309,7 +300,11 @@ fn check_equiv(ctx: &TypeContext, term: &Rc<Term>, tpe: &Rc<Value>) -> Result<()
     check(ctx, term, &eq_tpe)
 }
 
-fn check_glue(ctx: &TypeContext, tpe: &Rc<Value>, system: &System<Rc<Term>>) -> Result<(), TypeError> {
+fn check_glue(
+    ctx: &TypeContext,
+    tpe: &Rc<Value>,
+    system: &System<Rc<Term>>,
+) -> Result<(), TypeError> {
     for (alpha, t_alpha) in system.iter() {
         check_equiv(ctx, t_alpha, &tpe.face(ctx, alpha)?)?;
     }
@@ -428,9 +423,6 @@ pub fn check(ctx: &TypeContext, term: &Rc<Term>, tpe: &Rc<Value>) -> Result<(), 
             Ok(())
         }
         (Value::Pi(va, lam, _), Term::Split(_, ty, ces, _)) => {
-            let Value::Stuck(Term::Lam(_, _, _, _), e, _) = lam.as_ref() else {
-                Err(ErrorCause::Hole)?
-            };
             let (cas, de) = match va.as_ref() {
                 Value::Stuck(Term::Sum(_, cas, _), e, _) => (cas, e),
                 Value::Stuck(Term::HSum(_, cas, _), e, _) => (cas, e),
@@ -469,12 +461,11 @@ pub fn check(ctx: &TypeContext, term: &Rc<Term>, tpe: &Rc<Value>) -> Result<(), 
             let nx = ctx.fresh();
             let ctx = ctx.with_term(&x, &Value::var(nx, &va, Mod::Precise));
 
-            let res = check(
+            check(
                 &ctx,
                 t,
                 &app(&ctx, lam, &Value::var(nx, &va, Mod::Precise))?,
-            )?;
-            Ok(res)
+            )
         }
         (Value::Sigma(va, lam, _), Term::Pair(t1, t2, _)) => {
             check(ctx, t1, va)?;
@@ -509,7 +500,7 @@ pub fn check(ctx: &TypeContext, term: &Rc<Term>, tpe: &Rc<Value>) -> Result<(), 
             let vu = eval(ctx, u)?;
             check_glue_elem(ctx, &vu, ts, us)
         }
-        (Value::CompU(tu, ves, _), Term::GlueElem(u, us, _)) => {
+        (Value::CompU(_, _, _), Term::GlueElem(_, _, _)) => {
             todo!()
         }
         (Value::U, Term::Id(a, a0, a1, _)) => {

@@ -114,13 +114,13 @@ pub fn infer(ctx: &TypeContext, term: &Rc<Term>) -> Result<Rc<Value>, TypeError>
 
             let tele = label_type(c, &va)?;
 
-            let mut arg_ctx = ctx.in_closure(e).clone();
+            let mut tpe_ctx = ctx.in_closure(e).clone();
 
             for (arg, (name, tpe)) in es.iter().zip(tele.variables) {
-                let arg_v = eval(&arg_ctx, arg)?;
-                let tpe = eval(&arg_ctx, &tpe)?;
-                arg_ctx = arg_ctx.with_term(&name, &arg_v);
-                check(&arg_ctx, arg, &tpe)?;
+                let arg_v = eval(&ctx, arg)?;
+                let tpe = eval(&tpe_ctx, &tpe)?;
+                tpe_ctx = tpe_ctx.with_term(&name, &arg_v);
+                check(&ctx, arg, &tpe)?;
             }
 
             for formula in phis {

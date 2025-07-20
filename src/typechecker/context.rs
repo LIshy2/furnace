@@ -221,7 +221,7 @@ impl TypeContext {
         }
     }
 
-    pub fn fresh(&self, ) -> Identifier {
+    pub fn fresh(&self) -> Identifier {
         let res = *self.counter.borrow_mut();
         *self.counter.borrow_mut() += 1;
         Identifier(res)
@@ -235,18 +235,7 @@ impl TypeContext {
                 let EntryValueState::Lazy(term) = entry.value() else {
                     panic!("Not lazy in type_binds");
                 };
-                let rec_ctx = self.with_term(
-                    &name,
-                    &Value::stuck(
-                        term.as_ref().clone(),
-                        self.closure_rec(&term, name),
-                        Mod::Precise,
-                    ),
-                );
-                let check_span = trace_span!("def_eval", def = ?name);
-                let _enter = check_span.enter();
-                let value = eval(&rec_ctx, &term).unwrap();
-                drop(_enter);
+                let value = eval(&self, &term).unwrap();
                 Some(value)
             }
             None => {
@@ -271,18 +260,7 @@ impl TypeContext {
             let e = self.term_binds.get(name).cloned()?;
             match e.value() {
                 EntryValueState::Lazy(term) => {
-                    let rec_ctx = self.with_term(
-                        &name,
-                        &Value::stuck(
-                            term.as_ref().clone(),
-                            self.closure_rec(&term, name),
-                            Mod::Precise,
-                        ),
-                    );
-                    let check_span = trace_span!("def_eval", def = ?name);
-                    let _enter = check_span.enter();
-                    let value = eval(&rec_ctx, &term).unwrap();
-                    drop(_enter);
+                    let value = eval(&self, &term).unwrap();
                     value
                 }
                 EntryValueState::Cached(value) => value,
@@ -754,5 +732,190 @@ fn free_is_formula(
             free_is_formula(lhs, free_vars, free_is, bound_vars, bound_is);
             free_is_formula(rhs, free_vars, free_is, bound_vars, bound_is);
         }
+    }
+}
+
+trait Namespace {
+    fn max_ident(&self) -> Identifier;
+}
+
+impl Namespace for Rc<Value> {
+    fn max_ident(&self) -> Identifier {
+        fn max_id(a: Identifier, b: Identifier) -> Identifier {
+            if a.0 >= b.0 {
+                a
+            } else {
+                b
+            }
+        }
+
+        match self.as_ref() {
+            Value::Stuck(_, _, _) => Identifier(0),
+            Value::Pi(a, b, _) => max_id(a.max_ident(), b.max_ident()),
+            Value::App(a, b, _) => max_id(a.max_ident(), b.max_ident()),
+            Value::Var(id, val, _) => max_id(*id, val.max_ident()),
+            Value::U => Identifier(0),
+            Value::Sigma(a, b, _) => max_id(a.max_ident(), b.max_ident()),
+            Value::Pair(a, b, _) => max_id(a.max_ident(), b.max_ident()),
+            Value::Fst(val, _) => val.max_ident(),
+            Value::Snd(val, _) => val.max_ident(),
+            Value::Con(id, vals, _) => {
+                let max_in_vals = vals
+                    .iter()
+                    .map(|v| v.max_ident())
+                    .max_by_key(|id| id.0)
+                    .unwrap_or(Identifier(0));
+                max_id(*id, max_in_vals)
+            }
+            Value::PCon(id, val, vals, _, _) => {
+                let max_in_val = val.max_ident();
+                let max_in_vals = vals
+                    .iter()
+                    .map(|v| v.max_ident())
+                    .max_by_key(|id| id.0)
+                    .unwrap_or(Identifier(0));
+                max_id(*id, max_id(max_in_val, max_in_vals))
+            }
+            Value::PathP(a, b, c, _) => max_id(a.max_ident(), max_id(b.max_ident(), c.max_ident())),
+            Value::PLam(id, val, _) => max_id(*id, val.max_ident()),
+            Value::AppFormula(val, _, _) => val.max_ident(),
+            Value::Comp(a, b, system, _) => {
+                let max_in_system = system.max_ident();
+                max_id(a.max_ident(), max_id(b.max_ident(), max_in_system))
+            }
+            Value::CompU(a, system, _) => max_id(a.max_ident(), system.max_ident()),
+            Value::HComp(a, b, system, _) => {
+                max_id(a.max_ident(), max_id(b.max_ident(), system.max_ident()))
+            }
+            Value::Glue(a, system, _) => max_id(a.max_ident(), system.max_ident()),
+            Value::GlueElem(a, system, _) => max_id(a.max_ident(), system.max_ident()),
+            Value::UnGlueElem(a, system, _) => max_id(a.max_ident(), system.max_ident()),
+            Value::UnGlueElemU(a, b, system, _) => {
+                max_id(a.max_ident(), max_id(b.max_ident(), system.max_ident()))
+            }
+            Value::Id(a, b, c, _) => max_id(a.max_ident(), max_id(b.max_ident(), c.max_ident())),
+            Value::IdPair(a, system, _) => max_id(a.max_ident(), system.max_ident()),
+            Value::IdJ(a, b, c, d, e, f, _) => max_id(
+                a.max_ident(),
+                max_id(
+                    b.max_ident(),
+                    max_id(
+                        c.max_ident(),
+                        max_id(d.max_ident(), max_id(e.max_ident(), f.max_ident())),
+                    ),
+                ),
+            ),
+        }
+    }
+}
+
+impl<N: Namespace + Clone> Namespace for System<N> {
+    fn max_ident(&self) -> Identifier {
+        fn max_id(a: Identifier, b: Identifier) -> Identifier {
+            if a.0 >= b.0 {
+                a
+            } else {
+                b
+            }
+        }
+
+        let mut res = Identifier(0);
+        for (f, n) in self.iter() {
+            for (i, _) in f.binds.iter() {
+                res = max_id(*i, res);
+            }
+            res = max_id(res, n.max_ident());
+        }
+        res
+    }
+}
+
+impl Namespace for Formula {
+    fn max_ident(&self) -> Identifier {
+        fn max_id(a: Identifier, b: Identifier) -> Identifier {
+            if a.0 >= b.0 {
+                a
+            } else {
+                b
+            }
+        }
+
+        match self {
+            Formula::Dir(_) => Identifier(0),
+            Formula::Atom(identifier) => *identifier,
+            Formula::NegAtom(identifier) => *identifier,
+            Formula::And(lhs, rhs) => max_id(lhs.max_ident(), rhs.max_ident()),
+            Formula::Or(lhs, rhs) => max_id(lhs.max_ident(), rhs.max_ident()),
+        }
+    }
+}
+
+impl<A: Namespace, B: Namespace> Namespace for (A, B) {
+    fn max_ident(&self) -> Identifier {
+        fn max_id(a: Identifier, b: Identifier) -> Identifier {
+            if a.0 >= b.0 {
+                a
+            } else {
+                b
+            }
+        }
+
+        max_id(self.0.max_ident(), self.1.max_ident())
+    }
+}
+
+impl<A: Namespace, B: Namespace, C: Namespace> Namespace for (A, B, C) {
+    fn max_ident(&self) -> Identifier {
+        fn max_id(a: Identifier, b: Identifier) -> Identifier {
+            if a.0 >= b.0 {
+                a
+            } else {
+                b
+            }
+        }
+
+        max_id(
+            self.0.max_ident(),
+            max_id(self.1.max_ident(), self.2.max_ident()),
+        )
+    }
+}
+
+impl<A: Namespace, B: Namespace, C: Namespace, D: Namespace> Namespace for (A, B, C, D) {
+    fn max_ident(&self) -> Identifier {
+        fn max_id(a: Identifier, b: Identifier) -> Identifier {
+            if a.0 >= b.0 {
+                a
+            } else {
+                b
+            }
+        }
+
+        max_id(
+            max_id(self.0.max_ident(), self.1.max_ident()),
+            max_id(self.2.max_ident(), self.3.max_ident()),
+        )
+    }
+}
+
+impl<A: Namespace, B: Namespace, C: Namespace, D: Namespace, E: Namespace> Namespace
+    for (A, B, C, D, E)
+{
+    fn max_ident(&self) -> Identifier {
+        fn max_id(a: Identifier, b: Identifier) -> Identifier {
+            if a.0 >= b.0 {
+                a
+            } else {
+                b
+            }
+        }
+
+        max_id(
+            max_id(
+                max_id(self.0.max_ident(), self.1.max_ident()),
+                max_id(self.2.max_ident(), self.3.max_ident()),
+            ),
+            self.4.max_ident(),
+        )
     }
 }

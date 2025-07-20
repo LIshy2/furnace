@@ -2,7 +2,6 @@ use std::{
     collections::{hash_map::IntoIter, HashMap},
     hash::{Hash, Hasher},
     ops::Index,
-    rc::Rc,
 };
 
 use crate::ctt::{formula::Dir, Identifier};
@@ -104,7 +103,7 @@ pub struct System<A> {
     binds: HashMap<Face, A>,
 }
 
-impl<A: Clone> System<A> {
+impl<A> System<A> {
     pub fn empty() -> System<A> {
         System {
             binds: HashMap::new(),
@@ -113,20 +112,6 @@ impl<A: Clone> System<A> {
 
     pub fn domain(&self) -> Vec<Identifier> {
         self.binds.iter().flat_map(|(f, _)| f.domain()).collect()
-    }
-
-    pub fn insert(&self, alpha: Face, bind: A) -> System<A> {
-        let mut result = self.clone();
-        if !result.binds.iter().any(|(beta, _)| alpha.leq(beta)) {
-            result.binds = result
-                .binds
-                .into_iter()
-                .filter(|(gamma, _)| !gamma.leq(&alpha))
-                .map(|(f, a)| (f.clone(), a))
-                .collect();
-            result.binds.insert(alpha, bind);
-        }
-        result
     }
 
     pub fn get(&self, face: &Face) -> Option<&A> {
@@ -153,6 +138,22 @@ impl<A: Clone> System<A> {
         SystemIntersect {
             iter: intersect(&self.binds, &other.binds).into_iter(),
         }
+    }
+}
+
+impl<A: Clone> System<A> {
+    pub fn insert(&self, alpha: Face, bind: A) -> System<A> {
+        let mut result = self.clone();
+        if !result.binds.iter().any(|(beta, _)| alpha.leq(beta)) {
+            result.binds = result
+                .binds
+                .into_iter()
+                .filter(|(gamma, _)| !gamma.leq(&alpha))
+                .map(|(f, a)| (f.clone(), a))
+                .collect();
+            result.binds.insert(alpha, bind);
+        }
+        result
     }
 }
 
